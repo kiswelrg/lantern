@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # Smoke tests for lantern (curl only).
 #
-#   tests/smoke.sh                       start a throwaway Caddy on a spare port and test it
-#   tests/smoke.sh http://localhost:8080 test a running instance
+#   tests/smoke.sh                       throwaway Caddy on a temp copy of lantern, plus CLI tests
+#   tests/smoke.sh http://localhost:8080 HTTP tests against a running instance
 #
-# Uses sites/_example and apps/_example-app, plus a temporary symlinked "repo"
-# (sites/_smoke) to check that .git etc. are blocked. Starts the example app for
-# the duration of the test if nothing is listening on its port yet.
+# The throwaway run copies lantern (Caddyfile, _shared, bin, the example site and
+# app) into a temp dir, serves it on port 18080 (admin 12019) and runs the CLI
+# there, cut off from systemd: the real sites/, apps/, content repo and units are
+# never touched. Against a running instance it adds a temporary sites/_smoke
+# symlink. Either way the example app is started if nothing listens on its port.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+SRC="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BASE="${1:-}"
 TMP="$(mktemp -d)"
+ROOT="$SRC"
 PIDS=()
 cleanup() {
   local p
@@ -30,11 +33,17 @@ wait_for() { # url
 
 if [[ -z "$BASE" ]]; then
   command -v caddy >/dev/null || { echo "caddy not on PATH" >&2; exit 1; }
-  export LANTERN_ROOT="$ROOT" LANTERN_PORT=18080 LANTERN_ADMIN_PORT=12019
+  ROOT="$TMP/root"
+  mkdir -p "$ROOT/sites" "$ROOT/apps"
+  cp -a "$SRC/Caddyfile" "$SRC/_shared" "$SRC/bin" "$SRC/systemd" "$ROOT/"
+  cp -a "$SRC/sites/_example" "$ROOT/sites/"
+  cp -a "$SRC/apps/_example-app" "$ROOT/apps/"
+  export LANTERN_ROOT="$ROOT" LANTERN_PORT=18080 LANTERN_ADMIN_PORT=12019 LANTERN_CONTENT="$TMP/content"
   caddy run --config "$ROOT/Caddyfile" --adapter caddyfile >"$TMP/caddy.log" 2>&1 &
   PIDS+=($!)
   BASE="http://127.0.0.1:$LANTERN_PORT"
   wait_for "$BASE/" || { cat "$TMP/caddy.log" >&2; exit 1; }
+  THROWAWAY=1
 fi
 BASE="${BASE%/}"
 
@@ -66,6 +75,7 @@ check() { # description, then a command that must succeed
     echo "FAIL: $desc"
   fi
 }
+not() { ! "$@"; }
 status() { [[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE$1")" == "$2" ]]; }
 has() { curl -s "$BASE$1" | grep -qF -- "$2"; }
 lacks() { ! curl -s "$BASE$1" | grep -qF -- "$2"; }
@@ -101,6 +111,56 @@ check "vendored mermaid is served"             status /_shared/vendor/mermaid.mi
 check "app route proxies"                      has /_example-app/ 'X-Forwarded-Prefix: /_example-app'
 check "app sub-path proxies"                   has /_example-app/api/time '"now"'
 check "app without slash redirects"            status /_example-app 308
+
+if [[ -n "${THROWAWAY:-}" ]]; then
+  # The CLI of the temp copy, with no systemd user bus: units look stopped and
+  # nothing reloads the real lantern.
+  lantern() { env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="$TMP/nobus" "$ROOT/bin/lantern" "$@"; }
+  caddy_reload() { caddy reload --config "$ROOT/Caddyfile" --adapter caddyfile --address "localhost:$LANTERN_ADMIN_PORT"; }
+
+  # new-site / content repo
+  check "new-site creates a page in the content repo" lantern new-site smoke-new
+  check "content repo is a git repo"             test -d "$TMP/content/.git"
+  check "new-site README renders"                has /smoke-new/ '<h1 id="smoke-new">Smoke new</h1>'
+  check "landing page lists the new site"        has / 'href="/smoke-new/"'
+  check "check passes for a new site"            lantern check smoke-new
+  printf -- '---\ntitle: Sub page\n---\n[home](README.md) [up](../smoke-new/)\n' >"$TMP/content/pages/smoke-new/sub.md"
+  check "check of one page"                      lantern check smoke-new/sub.md
+  check "check of a missing page fails"          not lantern check smoke-new/nope.md
+  printf '\n[gone](missing.md)\n' >>"$TMP/content/pages/smoke-new/README.md"
+  check "check catches a broken link"            not lantern check smoke-new
+  check "new-site refuses a non-empty dir"       not lantern new-site smoke-dup "$TMP/content/pages/smoke-new"
+  check "new-site into a given dir"              lantern new-site smoke-docs "$TMP/repo/newdocs"
+  rm_site_keeps_content() { lantern rm-site smoke-new && test -f "$TMP/content/pages/smoke-new/README.md"; }
+  check "rm-site keeps the content"              rm_site_keeps_content
+
+  # add-site exposure checks
+  echo "key" >"$TMP/repo/docs/server.pem"
+  printf 'camera:\n  # source: rtsp://admin:hunter2@10.0.0.9/stream1\n' >"$TMP/repo/docs/config.yaml"
+  dry_run_lists() { local out; out="$(lantern add-site smoke-dry "$TMP/repo/docs" --dry-run)" && grep -qF "$1" <<<"$out"; }
+  check "add-site refuses a repo root"           not lantern add-site smoke-root "$TMP/repo"
+  check "add-site --dry-run lists risky files"   dry_run_lists server.pem
+  check "add-site --dry-run finds URL passwords" dry_run_lists config.yaml
+  check "add-site --dry-run links nothing"       test ! -e "$ROOT/sites/smoke-dry"
+  check "add-site --whole-repo links a repo"     lantern add-site smoke-root "$TMP/repo" --whole-repo
+
+  # apps: keep-prefix round trip, check, rm-app
+  lantern add-app smoke-keep --keep-prefix >/dev/null
+  check "add-app --keep-prefix uses the keep snippet" grep -q '^import lantern-app-keep smoke-keep ' "$ROOT/apps/smoke-keep/route.caddy"
+  KPORT="$(sed -n 's/^PORT=//p' "$ROOT/apps/smoke-keep/app.env")"
+  mkdir -p "$TMP/keep/smoke-keep"
+  echo "kept" >"$TMP/keep/smoke-keep/hello.txt"
+  (cd "$TMP/keep" && exec uv run --no-project python -m http.server "$KPORT" --bind 127.0.0.1) >"$TMP/keep.log" 2>&1 &
+  PIDS+=($!)
+  wait_for "http://127.0.0.1:$KPORT/" || cat "$TMP/keep.log" >&2
+  caddy_reload >/dev/null 2>&1 || echo "caddy reload failed" >&2
+  check "keep-prefix app sees the full path"     has /smoke-keep/hello.txt kept
+  check "check passes for a running app"         lantern check smoke-keep
+  touch "$ROOT/apps/smoke-keep/app.py"
+  check "rm-app refuses files it didn't create"  not lantern rm-app smoke-keep
+  check "rm-app --force removes the app"         lantern rm-app smoke-keep --force
+  check "rm-app removed the folder"              test ! -e "$ROOT/apps/smoke-keep"
+fi
 
 echo "$pass passed, $failed failed ($BASE)"
 ((failed == 0))

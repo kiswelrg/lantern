@@ -13,6 +13,9 @@ WorkingDirectory=@LANTERN_ROOT@/apps/%i
 Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
 Environment=APP_NAME=%i
 Environment=BASE_PATH=/%i/
+# Local settings shared by all apps, e.g. HTTPS_PROXY so uv can download dependencies
+# (units don't see your shell's environment). app.env wins on conflicts.
+EnvironmentFile=-@LANTERN_ROOT@/lantern.env
 EnvironmentFile=@LANTERN_ROOT@/apps/%i/app.env
 ExecStart=@LANTERN_ROOT@/apps/%i/run.sh
 Restart=on-failure

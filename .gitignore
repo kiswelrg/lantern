@@ -1,9 +1,15 @@
-# Site symlinks are machine-local; only the example site is committed.
+# Sites and apps are this machine's deployment, not lantern itself: sites/ holds
+# symlinks into other repos, apps/<name>/ holds run.sh/app.env/route.caddy wrappers
+# (with machine-specific paths). Content with no repo of its own lives in the
+# lantern-content repo (`lantern content`). Only the examples are committed.
 /sites/*
 !/sites/.gitkeep
 !/sites/_example/
+/apps/*
+!/apps/.gitkeep
+!/apps/_example-app/
 
-# Local settings written by `bin/lantern install` (e.g. LANTERN_PORT).
+# Local settings written by `bin/lantern install` (LANTERN_PORT, LANTERN_CONTENT).
 /lantern.env
 
 *.log

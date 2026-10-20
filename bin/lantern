@@ -10,7 +10,12 @@ APP_PORT_MIN=8101
 APP_PORT_MAX=8199
 MIN_CADDY="2.8.0" # readFile in templates
 
-# Local settings (lantern.env, gitignored): LANTERN_PORT.
+SKILL_LINK="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/lantern"
+BIN_LINK="$HOME/.local/bin/lantern"
+# Files add-app writes; rm-app refuses to delete anything else without --force.
+APP_SCAFFOLD=(run.sh app.env route.caddy README.md)
+
+# Local settings (lantern.env, gitignored): LANTERN_PORT, LANTERN_CONTENT.
 if [[ -f "$LANTERN_ROOT/lantern.env" ]]; then
   set -a
   # shellcheck source=/dev/null
@@ -18,7 +23,9 @@ if [[ -f "$LANTERN_ROOT/lantern.env" ]]; then
   set +a
 fi
 LANTERN_PORT="${LANTERN_PORT:-8080}"
-export LANTERN_ROOT LANTERN_PORT
+# Content repo for pages and tools that belong to no other repo (sibling of lantern by default).
+LANTERN_CONTENT="${LANTERN_CONTENT:-$(dirname "$LANTERN_ROOT")/lantern-content}"
+export LANTERN_ROOT LANTERN_PORT LANTERN_CONTENT
 
 # ---------- helpers ----------
 
@@ -46,10 +53,10 @@ app_port() {
   sed -n 's/^[[:space:]]*PORT=["'\'']\{0,1\}\([0-9]*\).*/\1/p' "$1/app.env" | tail -n 1
 }
 
-# Port in route.caddy's `import lantern-app <name> <port>` line (empty if customised).
+# Port in route.caddy's `import lantern-app[-keep] <name> <port>` line (empty if customised).
 route_port() {
   [[ -f "$1/route.caddy" ]] || return 0
-  awk '$1 == "import" && $2 == "lantern-app" { print $4 }' "$1/route.caddy" | tail -n 1
+  awk '$1 == "import" && ($2 == "lantern-app" || $2 == "lantern-app-keep") { print $4 }' "$1/route.caddy" | tail -n 1
 }
 
 app_dirs() {
@@ -87,24 +94,159 @@ validate() {
 
 version_ge() { [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" == "$2" ]]; }
 
+# "deploy-notes" -> "Deploy notes"
+title_for() { local t="${1//-/ }"; printf '%s' "${t^}"; }
+
+# Stub README with frontmatter: the landing page shows its title and description.
+write_readme() { # file, name
+  cat > "$1" <<EOF
+---
+title: $(title_for "$2")
+# description: One line shown on the lantern landing page.
+---
+# $(title_for "$2")
+EOF
+}
+
+# Set KEY=value in lantern.env, keeping its other lines.
+set_local() { # key, value
+  local f="$LANTERN_ROOT/lantern.env"
+  [[ -f "$f" ]] || printf '# Local lantern settings (gitignored).\n' > "$f"
+  if grep -q "^$1=" "$f"; then
+    sed -i "s|^$1=.*|$1=$2|" "$f"
+  else
+    printf '%s=%s\n' "$1" "$2" >> "$f"
+  fi
+}
+
+# Create the content repo on first use; print its path.
+ensure_content() {
+  if [[ ! -d "$LANTERN_CONTENT" ]]; then
+    mkdir -p "$LANTERN_CONTENT/pages" "$LANTERN_CONTENT/apps"
+    cat > "$LANTERN_CONTENT/README.md" <<'EOF'
+# lantern content
+
+Pages and small tools served by lantern that don't belong to any other repo.
+
+- `pages/<name>/`: a site, linked from lantern's `sites/<name>` (`lantern new-site <name>`)
+- `apps/<name>/`: code for a self-contained app; lantern's `apps/<name>/run.sh` starts it
+
+Nothing here is served by itself: only folders linked from lantern's `sites/` are visible on the LAN.
+EOF
+    touch "$LANTERN_CONTENT/pages/.gitkeep" "$LANTERN_CONTENT/apps/.gitkeep"
+    if command -v git >/dev/null; then git -C "$LANTERN_CONTENT" init -q; fi
+    echo "created content repo $LANTERN_CONTENT" >&2
+  fi
+  printf '%s\n' "$LANTERN_CONTENT"
+}
+
+# Symlink $2 -> $1 unless a real file is in the way.
+link_tool() { # target, link
+  if [[ -e "$2" && ! -L "$2" ]]; then
+    echo "skipped $2: a real file is in the way" >&2
+    return 0
+  fi
+  mkdir -p "$(dirname "$2")"
+  ln -sfn "$1" "$2"
+  echo "linked $2 -> $1"
+}
+
+# What linking a folder would put on the LAN: file count, size, risky-looking files.
+scan_exposure() { # dir
+  local dir=$1 files risky links
+  local -a prune=( \( -name '.*' -o -name node_modules -o -name __pycache__ \) -prune -o )
+  files="$(find "$dir" -mindepth 1 "${prune[@]}" -type f -print | wc -l)"
+  printf 'exposes %s file(s), %s, under %s\n' "$files" \
+    "$(du -sh --exclude='.?*' --exclude=node_modules --exclude=__pycache__ "$dir" 2>/dev/null | cut -f1)" "$dir"
+  echo "  (dotfiles, node_modules/ and __pycache__/ stay hidden)"
+  risky="$(find "$dir" -mindepth 1 "${prune[@]}" -type f \( \
+      -iname '*.pem' -o -iname '*.key' -o -iname '*.p12' -o -iname '*.pfx' -o -iname '*.jks' \
+      -o -iname '*.keystore' -o -iname '*.kdbx' -o -iname 'id_rsa*' -o -iname 'id_ed25519*' \
+      -o -iname 'id_ecdsa*' -o -iname '*.env' -o -iname '*.tfstate' -o -iname '*.tfvars' \
+      -o -iname 'kubeconfig*' -o -iname '*.ovpn' -o -iname '*.sqlite' -o -iname '*.sqlite3' -o -iname '*.db' \
+      -o \( \( -iname '*secret*' -o -iname '*credential*' -o -iname '*token*' -o -iname '*passw*' \) \
+            ! -iname '*.md' ! -iname '*.html' \) \) -printf '%P\n' | sort)"
+  if [[ -n "$risky" ]]; then
+    echo "risky-looking files (would be readable on the LAN):"
+    printf '%s\n' "$risky" | head -n 25 | sed 's/^/  /'
+    (($(printf '%s\n' "$risky" | wc -l) > 25)) && echo "  …"
+  fi
+  # Text files under 1 MB with a URL carrying a password (rtsp://user:pass@host, …).
+  risky="$(cd "$dir" && find . -mindepth 1 "${prune[@]}" -type f -size -1024k -print0 |
+    xargs -0 -r grep -IlE '[[:alpha:]][[:alnum:]+.-]*://[^/:@[:space:]]+:[^/@[:space:]]+@' 2>/dev/null |
+    sed 's|^\./||' | sort || true)"
+  if [[ -n "$risky" ]]; then
+    echo "files with credentials in a URL (scheme://user:password@host):"
+    printf '%s\n' "$risky" | head -n 25 | sed 's/^/  /'
+  fi
+  links="$(find "$dir" -mindepth 1 "${prune[@]}" -type l -printf '%P -> %l\n' | head -n 10)"
+  if [[ -n "$links" ]]; then
+    echo "symlinks inside (followed when served):"
+    printf '%s\n' "$links" | sed 's/^/  /'
+  fi
+  return 0
+}
+
+# Link sites/<name> -> dir and print its URL.
+link_site() { # name, dir
+  ln -s "$2" "$SITES/$1"
+  echo "added $1 -> $2"
+  url_for "$1"; echo
+}
+
 caddy_version() { "$1" version 2>/dev/null | awk '{ sub(/^v/, "", $1); print $1 }'; }
 
 # ---------- commands ----------
 
 cmd_add_site() {
-  [[ $# -eq 2 ]] || die "usage: lantern add-site <name> <path>"
-  local name=$1 path=$2 target
+  local usage="usage: lantern add-site <name> <path> [--dry-run] [--whole-repo]"
+  local dry=0 whole=0 args=() a
+  for a in "$@"; do
+    case "$a" in
+      --dry-run) dry=1 ;;
+      --whole-repo) whole=1 ;;
+      -*) die "$usage" ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  [[ ${#args[@]} -eq 2 ]] || die "$usage"
+  local name=${args[0]} path=${args[1]} target
   valid_name "$name" || die "site names are lowercase-kebab (a-z, 0-9, -): '$name'"
   name_taken "$name" && die "'$name' is already a site or app"
   [[ -d "$path" ]] || die "not a directory: $path"
   target="$(cd "$path" && pwd)"
   [[ "$target" == / || "$target" == "$HOME" ]] && die "refusing to serve all of $target"
-  ln -s "$target" "$SITES/$name"
-  echo "added $name -> $target"
-  if [[ -d "$target/.git" ]]; then
-    echo "note: that's a whole repo. Dotfiles (.git, .env, …) are blocked, but every other file in it is now readable on the LAN."
+  if [[ -e "$target/.git" ]] && ((!whole)); then
+    die "$target is a whole repo: link its docs folder instead, or pass --whole-repo"
   fi
-  url_for "$name"; echo
+  scan_exposure "$target"
+  if ((dry)); then
+    echo "dry run: would add $name -> $target"
+    return 0
+  fi
+  link_site "$name" "$target"
+}
+
+cmd_new_site() {
+  [[ $# -ge 1 && $# -le 2 ]] || die "usage: lantern new-site <name> [dir]"
+  local name=$1 dir=${2:-}
+  valid_name "$name" || die "site names are lowercase-kebab (a-z, 0-9, -): '$name'"
+  name_taken "$name" && die "'$name' is already a site or app"
+  [[ -n "$dir" ]] || dir="$(ensure_content)/pages/$name"
+  if [[ -e "$dir" ]]; then
+    [[ -d "$dir" ]] || die "not a directory: $dir"
+    [[ -z "$(ls -A "$dir")" ]] || die "$dir is not empty: use add-site to serve an existing folder"
+  fi
+  mkdir -p "$dir"
+  dir="$(cd "$dir" && pwd)"
+  write_readme "$dir/README.md" "$name"
+  echo "created $dir/README.md"
+  link_site "$name" "$dir"
+}
+
+cmd_content() {
+  [[ $# -eq 0 ]] || die "usage: lantern content"
+  ensure_content
 }
 
 cmd_rm_site() {
@@ -116,8 +258,17 @@ cmd_rm_site() {
 }
 
 cmd_add_app() {
-  [[ $# -ge 1 && $# -le 2 ]] || die "usage: lantern add-app <name> [port]"
-  local name=$1 port=${2:-} dir d
+  local usage="usage: lantern add-app <name> [port] [--keep-prefix]"
+  local keep=0 args=() a
+  for a in "$@"; do
+    case "$a" in
+      --keep-prefix) keep=1 ;;
+      -*) die "$usage" ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  [[ ${#args[@]} -ge 1 && ${#args[@]} -le 2 ]] || die "$usage"
+  local name=${args[0]} port=${args[1]:-} dir d
   valid_name "$name" || die "app names are lowercase-kebab (a-z, 0-9, -): '$name'"
   name_taken "$name" && die "'$name' is already a site or app"
   if [[ -n "$port" ]]; then
@@ -136,19 +287,31 @@ cmd_add_app() {
 PORT=$port
 EOF
 
+  local snippet=lantern-app prefix_note
+  if ((keep)); then
+    snippet=lantern-app-keep
+    prefix_note="# The app is served under /$name/ and Caddy passes the full path through, so
+# the app itself must serve everything under \$BASE_PATH (e.g. Streamlit
+# --server.baseUrlPath, marimo --base-url, Dash url_base_pathname)."
+  else
+    prefix_note="# The app is served under /$name/ and Caddy strips that prefix, so use relative
+# URLs (or build absolute ones from \$BASE_PATH / the X-Forwarded-Prefix header)."
+  fi
+
   cat > "$dir/route.caddy" <<EOF
-# Proxies /$name/ to this app (see the lantern-app snippet in the Caddyfile).
+# Proxies /$name/ to this app (see the $snippet snippet in the Caddyfile).
 # Replace with custom Caddy directives if the app needs something else.
-import lantern-app $name $port
+import $snippet $name $port
 EOF
+
+  write_readme "$dir/README.md" "$name"
 
   cat > "$dir/run.sh" <<EOF
 #!/usr/bin/env bash
 # Started by lantern-app@$name.service with PORT (from app.env), APP_NAME and
 # BASE_PATH=/$name/ in the environment. Listen on 127.0.0.1:\$PORT.
 #
-# The app is served under /$name/ and Caddy strips that prefix, so use relative
-# URLs (or build absolute ones from \$BASE_PATH / the X-Forwarded-Prefix header).
+$prefix_note
 #
 # Python: use uv, e.g.
 #   exec uv run --script app.py                          # PEP 723 single file
@@ -161,7 +324,7 @@ exec uv run --no-project python -m http.server "\$PORT" --bind 127.0.0.1
 EOF
   chmod +x "$dir/run.sh"
 
-  echo "created apps/$name/ (port $port)"
+  echo "created apps/$name/ (port $port$( ((keep)) && echo ", prefix kept"))"
   if unit_active lantern; then
     cmd_reload >/dev/null && echo "caddy reloaded: /$name/ is routed"
   fi
@@ -171,9 +334,126 @@ next:
   1. edit apps/$name/run.sh to start your server on \$PORT
   2. systemctl --user enable --now lantern-app@$name
 EOF
-  unit_active lantern || echo "  3. bin/lantern reload   (lantern isn't running yet)"
+  unit_active lantern || echo "  3. lantern reload   (lantern isn't running yet)"
   echo
   url_for "$name"; echo
+}
+
+cmd_rm_app() {
+  local usage="usage: lantern rm-app <name> [--force]"
+  local force=0 args=() a
+  for a in "$@"; do
+    case "$a" in
+      --force) force=1 ;;
+      -*) die "$usage" ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  [[ ${#args[@]} -eq 1 ]] || die "$usage"
+  local name=${args[0]} dir="$APPS/${args[0]}" extra f known
+  [[ -n "$name" && "$name" != */* && -d "$dir" ]] || die "no app named '$name'"
+  extra=""
+  for f in "$dir"/* "$dir"/.[!.]*; do
+    [[ -e "$f" || -L "$f" ]] || continue
+    known=0
+    for a in "${APP_SCAFFOLD[@]}"; do [[ "$(basename "$f")" == "$a" ]] && known=1; done
+    ((known)) || extra+=" $(basename "$f")"
+  done
+  if [[ -n "$extra" ]] && ((!force)); then
+    die "apps/$name has files add-app didn't create:$extra (move them out, or pass --force)"
+  fi
+  systemctl --user disable --now "lantern-app@$name" >/dev/null 2>&1 || true
+  systemctl --user reset-failed "lantern-app@$name" >/dev/null 2>&1 || true
+  rm -rf -- "$dir"
+  echo "removed apps/$name (unit stopped and disabled)"
+  if unit_active lantern; then
+    cmd_reload >/dev/null && echo "caddy reloaded: /$name/ is no longer routed"
+  fi
+}
+
+# Live check of one site or app (or one page of it) through the running lantern:
+# the page answers, Markdown is rendered, and the page's same-origin links resolve.
+cmd_check() {
+  [[ $# -eq 1 ]] || die "usage: lantern check <name>[/<page>]"
+  local name=${1%%/*} sub="" base="http://127.0.0.1:$LANTERN_PORT" fails=0 warns=0 port state
+  [[ "$1" == */* ]] && sub="${1#*/}"
+  # The page's URL path, and the directory its relative links resolve against.
+  local page="/$name/$sub" pagedir
+  pagedir="${page%/*}/"
+  local g="" y="" r="" z=""
+  [[ -t 1 ]] && g=$'\e[32m' y=$'\e[33m' r=$'\e[31m' z=$'\e[0m'
+  ok() { printf '  %s✓%s %s\n' "$g" "$z" "$*"; }
+  warn() { printf '  %s!%s %s\n' "$y" "$z" "$*"; warns=$((warns + 1)); }
+  fail() { printf '  %s✗%s %s\n' "$r" "$z" "$*"; fails=$((fails + 1)); }
+
+  port_listening "$LANTERN_PORT" || die "nothing listening on port $LANTERN_PORT: is lantern running?"
+  if [[ -d "$APPS/$name" ]]; then
+    echo "App $name"
+    port="$(app_port "$APPS/$name")"
+    state="$(systemctl --user is-active "lantern-app@$name" 2>/dev/null || true)"
+    if [[ -n "$port" ]] && port_listening "$port"; then
+      ok "listening on $port (unit: ${state:-unknown})"
+    else
+      fail "nothing listening on ${port:-?} (unit: ${state:-unknown}; journalctl --user -u lantern-app@$name)"
+    fi
+  elif [[ -L "$SITES/$name" || -e "$SITES/$name" ]]; then
+    echo "Site $name"
+    if [[ -e "$SITES/$name" ]]; then ok "-> $(readlink -f "$SITES/$name")"; else fail "broken symlink -> $(readlink "$SITES/$name")"; fi
+  else
+    die "no site or app named '$name'"
+  fi
+
+  local out code ctype body
+  out="$(curl -s --max-time 15 -w '\n%{http_code} %{content_type}' "$base$page" || true)"
+  read -r code ctype <<<"$(tail -n 1 <<<"$out")"
+  body="$(sed '$d' <<<"$out")"
+  if [[ "$code" == 200 ]]; then
+    ok "GET $page → 200 ${ctype%%;*}"
+  else
+    fail "GET $page → ${code:-no response}$([[ "$code" == 502 ]] && echo " (app not reachable)")"
+  fi
+
+  # Markdown pages (a .md, or a folder whose README is its index) come back rendered.
+  local site_dir="$SITES/$name/$sub" md=0
+  if [[ "$page" =~ \.(md|markdown)$ ]]; then
+    md=1
+  elif [[ "$page" == */ && -d "$site_dir" && ! -f "$site_dir/index.html" ]] &&
+    [[ -f "$site_dir/README.md" || -f "$site_dir/readme.md" || -f "$site_dir/index.md" ]]; then
+    md=1
+  fi
+  if ((md)) && [[ "$code" == 200 ]]; then
+    if grep -qF '<link rel="stylesheet" href="/_shared/' <<<"$body"; then ok "Markdown rendered"; else fail "Markdown not rendered"; fi
+  fi
+
+  # Same-origin links on the page (relative ones resolve against the page's folder).
+  [[ "$code" == 200 ]] || body=""
+  local link url lcode n=0 bad=0
+  while read -r link; do
+    [[ -n "$link" ]] || continue
+    link="${link//&amp;/&}"
+    link="${link%%#*}"
+    [[ -n "$link" ]] || continue
+    case "$link" in
+      *://* | //* | mailto:* | data:* | javascript:* | tel:*) continue ;;
+      /*)
+        url="$base$link"
+        [[ "$link" == "/" || "$link" == /_shared/* || "$link" == "/$name/"* ]] ||
+          warn "absolute link $link leaves /$name/ (breaks unless the app is served at the root)"
+        ;;
+      *) url="$base$pagedir$link" ;;
+    esac
+    n=$((n + 1))
+    lcode="$(curl -s -o /dev/null --max-time 15 -w '%{http_code}' "$url" || true)"
+    if [[ "$lcode" =~ ^[23] ]]; then :; else fail "link $link → ${lcode:-no response}"; bad=$((bad + 1)); fi
+  done < <(grep -oiE '(href|src)="[^"]*"' <<<"$body" | sed -E 's/^[^"]*"//; s/"$//' | awk '!seen[$0]++' | head -n 50)
+  ((n == 0)) || ((bad)) || ok "$n link(s) on the page resolve"
+
+  echo
+  if ((fails)); then
+    echo "$fails problem(s), $warns warning(s)"
+    return 1
+  fi
+  echo "ok ($warns warning(s)): $(url_for "$name")$sub"
 }
 
 cmd_list() {
@@ -207,6 +487,7 @@ cmd_list() {
   ((any)) || echo "  (none)"
 
   echo
+  echo "Content repo: $LANTERN_CONTENT$([[ -d "$LANTERN_CONTENT" ]] || echo " (not created yet)")"
   echo "Served at $(url_for "" | sed 's|/*$|/|')"
 }
 
@@ -237,7 +518,7 @@ cmd_install() {
 
   if [[ -n "$port" ]]; then
     [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1024 && port <= 65535)) || die "bad port: $port"
-    printf '# Local lantern settings (gitignored).\nLANTERN_PORT=%s\n' "$port" > "$LANTERN_ROOT/lantern.env"
+    set_local LANTERN_PORT "$port"
     LANTERN_PORT=$port
     echo "wrote lantern.env (LANTERN_PORT=$port)"
   fi
@@ -251,6 +532,8 @@ cmd_install() {
     echo "installed $UNIT_DIR/$f"
   done
   systemctl --user daemon-reload
+  link_tool "$LANTERN_ROOT/bin/lantern" "$BIN_LINK"
+  link_tool "$LANTERN_ROOT/skill" "$SKILL_LINK"
 
   if unit_active lantern; then
     systemctl --user restart lantern
@@ -315,6 +598,19 @@ cmd_doctor() {
   if grep -qs '^ENABLED=yes' /etc/ufw/ufw.conf; then
     warn "ufw is enabled: make sure the LAN may reach port $LANTERN_PORT, e.g. sudo ufw allow from <lan-subnet> to any port $LANTERN_PORT proto tcp"
   fi
+  local link target
+  for link in "$BIN_LINK:$LANTERN_ROOT/bin/lantern" "$SKILL_LINK:$LANTERN_ROOT/skill"; do
+    target="${link#*:}" link="${link%%:*}"
+    if [[ "$(readlink -f "$link" 2>/dev/null)" == "$(readlink -f "$target")" ]]; then
+      ok "$link linked"
+    else
+      warn "$link is not linked to $target; run bin/lantern install"
+    fi
+  done
+  if [[ -d "$LANTERN_CONTENT" ]]; then ok "content repo $LANTERN_CONTENT"; fi
+  if [[ -n "${HTTPS_PROXY:-${https_proxy:-}}" ]] && ! grep -qsiE '^https_proxy=' "$LANTERN_ROOT/lantern.env"; then
+    warn "your shell uses a proxy but app units won't: add HTTPS_PROXY/HTTP_PROXY/NO_PROXY to lantern.env so uv can install app dependencies"
+  fi
 
   echo "Sites"
   local e name n=0
@@ -375,13 +671,23 @@ usage() {
   cat <<EOF
 usage: lantern <command> [args]
 
-  add-site <name> <path>   serve <path> at /<name>/ (creates a symlink in sites/)
+  add-site <name> <path> [--dry-run] [--whole-repo]
+                           serve <path> at /<name>/ (creates a symlink in sites/);
+                           lists what becomes readable; refuses a repo root unless --whole-repo
+  new-site <name> [dir]    create <dir> (default: content repo pages/<name>) with a stub README, serve it
   rm-site <name>           remove a site (the symlink only)
-  add-app <name> [port]    scaffold apps/<name>/ with the next free port
+  add-app <name> [port] [--keep-prefix]
+                           scaffold apps/<name>/ with the next free port; --keep-prefix for apps
+                           that serve under /<name>/ themselves (Streamlit, marimo, Dash, …)
+  rm-app <name> [--force]  stop and disable the app's unit, remove apps/<name>/
+  check <name>[/<page>]    live check of a site or app, or one page of it: answers, Markdown
+                           renders, same-origin links on it resolve
   list                     sites (-> targets) and apps (port, status)
+  content                  print the content repo path (creates it on first use)
   reload                   validate the Caddyfile, then reload Caddy
   doctor                   check caddy, service, port, links and apps
-  install [--port N]       install/refresh the systemd user units and start lantern
+  install [--port N]       install/refresh the systemd user units, link ~/.local/bin/lantern and
+                           the Claude skill, start lantern
 EOF
 }
 
@@ -389,9 +695,13 @@ cmd="${1:-help}"
 shift || true
 case "$cmd" in
   add-site) cmd_add_site "$@" ;;
+  new-site) cmd_new_site "$@" ;;
   rm-site) cmd_rm_site "$@" ;;
   add-app) cmd_add_app "$@" ;;
+  rm-app) cmd_rm_app "$@" ;;
+  check) cmd_check "$@" ;;
   list | ls) cmd_list "$@" ;;
+  content) cmd_content "$@" ;;
   reload) cmd_reload "$@" ;;
   doctor) cmd_doctor "$@" ;;
   install) cmd_install "$@" ;;

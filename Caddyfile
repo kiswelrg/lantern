@@ -25,6 +25,18 @@
 	}
 }
 
+# Same, but the /<name> prefix is kept: for apps that serve under a base path
+# themselves (Streamlit --server.baseUrlPath, marimo --base-url, Dash url_base_pathname).
+#     import lantern-app-keep <name> <port>      (add-app --keep-prefix)
+(lantern-app-keep) {
+	redir /{args[0]} /{args[0]}/ 308
+	handle /{args[0]}/* {
+		reverse_proxy 127.0.0.1:{args[1]} {
+			header_up X-Forwarded-Prefix /{args[0]}
+		}
+	}
+}
+
 http://:{$LANTERN_PORT:8080} {
 	encode zstd gzip
 

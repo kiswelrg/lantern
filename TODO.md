@@ -4,8 +4,8 @@ Work top to bottom. Each phase should end in a working, testable state.
 
 ## Phase 0 — Skeleton & install
 - [x] Create the directory layout from CLAUDE.md (`bin/`, `systemd/`, `_shared/vendor/`, `sites/`, `apps/`)
-- [x] `.gitignore`: `sites/*` (keep `.gitkeep`, `_example/`), `lantern.env`, logs.
-      Apps stay tracked (their `app.env` only holds the port, which `route.caddy` repeats anyway)
+- [x] `.gitignore`: `sites/*` and `apps/*` (keep `.gitkeep` and the examples), `lantern.env`, logs.
+      Apps are machine-local wrappers like sites; content with no repo goes in `lantern-content`
 - [ ] Install Caddy v2 from the official apt repo (Ubuntu's 2.6.2 is too old: templates need
       `readFile`, Caddy ≥ 2.8). Developed and tested against 2.11.7. **Needs sudo** (README → Setup)
 - [x] `systemd/lantern.service` (user unit): runs `caddy run --config $LANTERN_ROOT/Caddyfile`,
@@ -62,6 +62,16 @@ Work top to bottom. Each phase should end in a working, testable state.
       name; `description` from frontmatter), live on every request via `_shared/index.html`
 - [x] App up/down badge: client-side `HEAD /<name>/` (502 = down), no backend
 
+## Phase 5b — Claude skill (`skill/`)
+- [x] CLI groundwork: `add-site --dry-run/--whole-repo` + exposure scan, `new-site`, `check`,
+      `rm-app`, `content`, `add-app --keep-prefix` (`(lantern-app-keep)` snippet),
+      `install` links `~/.local/bin/lantern` and `~/.claude/skills/lantern`
+- [x] Content repo (`lantern-content`, sibling of lantern) for pages/apps with no repo
+- [x] Skill: jobs Docs / Blank site / Page / App; survey → one proposal → run → `lantern check` → report
+- [x] Smoke tests cover the new CLI on a throwaway copy
+- [x] App units read `lantern.env` (proxy vars for uv); `doctor` warns when the shell has a proxy it lacks
+- [ ] Cold-start test: trigger the skill from a fresh session in another repo
+
 ## Phase 6 — Runnable code (later)
 - [ ] Docs on publishing a notebook statically (`jupyter nbconvert --to html`, via `uvx`)
 - [ ] In-browser Python: vendor Pyodide under `_shared/vendor/`; try `marimo export html-wasm`
@@ -74,4 +84,3 @@ Work top to bottom. Each phase should end in a working, testable state.
 - [ ] Subdomain routing (`<name>.lantern.lan`) for apps that can't live under a path prefix
 - [ ] Client-side search across docs
 - [ ] Port 80 via system unit with `CAP_NET_BIND_SERVICE`
-- [ ] `rm-app` (stop + disable the unit, remove the folder, reload)

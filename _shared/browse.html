@@ -1,0 +1,47 @@
+{{- /* Listing for a directory without README.md / index.html. Hidden entries are
+       already removed by the file_server `hide` setting. */ -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{html .Path}}</title>
+<link rel="stylesheet" href="/_shared/style.css">
+<script defer src="/_shared/lantern.js"></script>
+</head>
+<body>
+<header class="lantern-bar">
+  <nav class="crumbs">
+    <a class="home" href="/">lantern</a>
+    {{- range $i, $c := .Breadcrumbs}}{{if $i}}<span class="sep">/</span><a href="{{html $c.Link}}">{{html $c.Text}}</a>{{end}}{{end}}
+  </nav>
+</header>
+<main class="page">
+<h1>{{html .Path}}</h1>
+<p class="lead">{{.NumDirs}} folder{{if ne .NumDirs 1}}s{{end}}, {{.NumFiles}} file{{if ne .NumFiles 1}}s{{end}}</p>
+<table class="listing">
+  <thead>
+    <tr>
+      <th class="icon"></th>
+      <th><a href="?sort=name&amp;order={{if and (eq .Sort "name") (ne .Order "desc")}}desc{{else}}asc{{end}}">Name</a></th>
+      <th class="num"><a href="?sort=size&amp;order={{if and (eq .Sort "size") (ne .Order "desc")}}desc{{else}}asc{{end}}">Size</a></th>
+      <th class="time"><a href="?sort=time&amp;order={{if and (eq .Sort "time") (ne .Order "desc")}}desc{{else}}asc{{end}}">Modified</a></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{- if .CanGoUp}}
+    <tr><td class="icon">↩</td><td><a href="..">..</a></td><td class="num"></td><td class="time"></td></tr>
+    {{- end}}
+    {{- range .Items}}
+    <tr>
+      <td class="icon">{{if .IsDir}}📁{{else if .HasExt ".md" ".markdown"}}📝{{else if .HasExt ".html" ".htm"}}🌐{{else}}📄{{end}}</td>
+      <td><a href="{{html .URL}}">{{html .Name}}{{if .IsDir}}/{{end}}</a></td>
+      <td class="num">{{if not .IsDir}}{{.HumanSize}}{{end}}</td>
+      <td class="time"><time datetime="{{.ModTime.Format "2006-01-02T15:04:05Z07:00"}}">{{.HumanModTime "2006-01-02 15:04"}} UTC</time></td>
+    </tr>
+    {{- end}}
+  </tbody>
+</table>
+</main>
+</body>
+</html>

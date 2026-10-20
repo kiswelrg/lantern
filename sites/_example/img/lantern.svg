@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="lantern">
+  <rect x="50" y="8" width="20" height="10" rx="3" fill="#7a5c2e"/>
+  <path d="M40 20h40l8 12v56l-8 12H40l-8-12V32z" fill="#f59e0b"/>
+  <path d="M46 30h28v60H46z" fill="#fde68a"/>
+  <circle cx="60" cy="60" r="10" fill="#fff7d6"/>
+  <rect x="44" y="100" width="32" height="10" rx="3" fill="#7a5c2e"/>
+</svg>

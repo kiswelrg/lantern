@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showcase</title>
+<link rel="stylesheet" href="/_shared/style.css">
+<style>
+  .swatches { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .swatches span { width: 4rem; height: 4rem; border-radius: var(--radius); border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<header class="lantern-bar"><nav class="crumbs"><a class="home" href="/">lantern</a><span class="sep">/</span><a href="./">_example</a><span class="sep">/</span><span class="here">showcase</span></nav></header>
+<main class="doc">
+  <h1>Showcase</h1>
+  <p>A plain <code>.html</code> file, served as-is. It links <code>/_shared/style.css</code> for the shared look
+     and can do anything else it likes.</p>
+  <div class="swatches">
+    <span style="background: var(--accent)"></span>
+    <span style="background: var(--ok)"></span>
+    <span style="background: var(--bad)"></span>
+    <span style="background: var(--bg-soft)"></span>
+  </div>
+  <p><button id="b" type="button">Click me</button> <output id="o"></output></p>
+  <script>
+    let n = 0;
+    document.getElementById("b").onclick = () => (document.getElementById("o").textContent = ++n);
+  </script>
+</main>
+</body>
+</html>

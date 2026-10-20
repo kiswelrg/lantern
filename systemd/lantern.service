@@ -1,0 +1,21 @@
+# lantern — Caddy as a systemd *user* service.
+# Template: `bin/lantern install` fills in @LANTERN_ROOT@ / @CADDY@ and copies it
+# to ~/.config/systemd/user/. Edit this file, not the installed copy.
+[Unit]
+Description=lantern: LAN docs and apps (Caddy)
+Documentation=file://@LANTERN_ROOT@/README.md
+
+[Service]
+Type=notify
+Environment="LANTERN_ROOT=@LANTERN_ROOT@"
+Environment=LANTERN_PORT=8080
+# Optional local overrides (LANTERN_PORT=…), written by `bin/lantern install --port`.
+EnvironmentFile=-@LANTERN_ROOT@/lantern.env
+ExecStart="@CADDY@" run --config "@LANTERN_ROOT@/Caddyfile" --adapter caddyfile
+ExecReload="@CADDY@" reload --config "@LANTERN_ROOT@/Caddyfile" --adapter caddyfile --force
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=5s
+
+[Install]
+WantedBy=default.target

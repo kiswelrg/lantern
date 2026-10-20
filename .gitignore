@@ -1,0 +1,10 @@
+# Site symlinks are machine-local; only the example site is committed.
+/sites/*
+!/sites/.gitkeep
+!/sites/_example/
+
+# Local settings written by `bin/lantern install` (e.g. LANTERN_PORT).
+/lantern.env
+
+*.log
+__pycache__/

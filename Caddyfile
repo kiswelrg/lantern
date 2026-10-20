@@ -1,0 +1,97 @@
+# lantern — written once. Adding a doc or an app must never require editing this file.
+#
+# Env (set by the systemd unit and by bin/lantern):
+#   LANTERN_ROOT  absolute path of this repo (required)
+#   LANTERN_PORT  listen port (default 8080)
+#
+# Everything below runs inside one `route` so the order is exactly as written:
+# first match wins, top to bottom.
+{
+	# Plain HTTP on the LAN: no certificates, no redirects to https.
+	auto_https off
+	admin localhost:{$LANTERN_ADMIN_PORT:2019}
+}
+
+# Routing for one app. apps/<name>/route.caddy normally contains just:
+#     import lantern-app <name> <port>
+# The /<name> prefix is stripped before proxying; the app gets it back in
+# X-Forwarded-Prefix in case it needs to build absolute URLs.
+(lantern-app) {
+	redir /{args[0]} /{args[0]}/ 308
+	handle_path /{args[0]}/* {
+		reverse_proxy 127.0.0.1:{args[1]} {
+			header_up X-Forwarded-Prefix /{args[0]}
+		}
+	}
+}
+
+http://:{$LANTERN_PORT:8080} {
+	encode zstd gzip
+
+	route {
+		# 1. Never serve hidden or junk paths from symlinked repos (.git, .env, …).
+		@hidden path_regexp (^|/)(\.|node_modules(/|$)|__pycache__(/|$))
+		error @hidden 404
+
+		# 2. Apps (one route.caddy per app; zero apps is fine).
+		import {$LANTERN_ROOT}/apps/*/route.caddy
+
+		# 3. Shared styles, scripts and templates.
+		handle_path /_shared/* {
+			root * {$LANTERN_ROOT}/_shared
+			file_server
+		}
+
+		# 4. Landing page: lists sites/ and apps/ on every request.
+		handle / {
+			root * {$LANTERN_ROOT}
+			rewrite * /_shared/index.html
+			templates
+			file_server
+		}
+
+		# 5. Docs.
+		handle {
+			root * {$LANTERN_ROOT}/sites
+
+			# A directory's README.md is its index page (an index.html still wins).
+			@readme {
+				path */
+				not file {path}index.html
+				file {path}README.md {path}readme.md {path}index.md
+			}
+			rewrite @readme {file_match.relative}
+
+			# Markdown → HTML. The template reads the post-rewrite path from a
+			# server-side var, so it can't be spoofed via the query string.
+			@markdown {
+				path *.md *.markdown
+				file
+			}
+			handle @markdown {
+				vars lantern_doc {path}
+				root * {$LANTERN_ROOT}/_shared
+				rewrite * /md.html
+				templates {
+					root {$LANTERN_ROOT}/sites
+				}
+				file_server
+			}
+
+			# Everything else as-is; directories without a README get a listing.
+			handle {
+				file_server {
+					browse {$LANTERN_ROOT}/_shared/browse.html
+					hide .* node_modules __pycache__
+				}
+			}
+		}
+	}
+
+	handle_errors {
+		root * {$LANTERN_ROOT}/_shared
+		rewrite * /error.html
+		templates
+		file_server
+	}
+}

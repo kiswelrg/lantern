@@ -1,0 +1,79 @@
+{{- /*
+  Landing page. Lists sites/ and apps/ on every request, so it is always current.
+  Template root is LANTERN_ROOT. Titles come from a README's frontmatter `title`
+  or its leading `# heading`; parsed with regexes so one malformed README can't
+  break this page.
+*/ -}}
+{{- define "card" -}}
+  {{- $name := .name -}}{{- $dir := .dir -}}
+  {{- $ok := fileExists $dir -}}
+  {{- $readme := "" -}}
+  {{- if $ok}}{{range list "README.md" "readme.md" "index.md"}}{{if and (not $readme) (fileExists (printf "%s/%s" $dir .))}}{{$readme = printf "%s/%s" $dir .}}{{end}}{{end}}{{end -}}
+  {{- $title := $name -}}{{- $desc := "" -}}
+  {{- if $readme -}}
+    {{- $src := readFile $readme -}}
+    {{- $fm := regexFind `^---\r?\n(?s:.*?)\r?\n---` $src -}}
+    {{- $t := regexFind `(?m)^title:[ \t]*\S.*$` $fm -}}
+    {{- $h1 := regexFind `^\s*#[ \t]+[^\n]+` (trimPrefix $fm $src) -}}
+    {{- if $t}}{{$title = trimAll `"' ` (trimPrefix "title:" $t)}}
+    {{- else if $h1}}{{$title = trim (regexReplaceAll `^\s*#[ \t]+|[ \t]+#+[ \t]*$` $h1 "")}}{{end -}}
+    {{- $desc = trimAll `"' ` (trimPrefix "description:" (regexFind `(?m)^description:[ \t]*\S.*$` $fm)) -}}
+  {{- end}}
+  <li><a href="/{{html $name}}/">
+    <div class="title">{{html $title}}
+      {{- if not $ok}} <span class="badge broken">broken link</span>{{end}}
+      {{- if .app}} <span class="badge" data-app-status="/{{html $name}}/">…</span>{{end}}</div>
+    <div class="path">/{{html $name}}/</div>
+    {{- with $desc}}
+    <div class="desc">{{html .}}</div>
+    {{- end}}
+  </a></li>
+{{- end -}}
+
+{{- $sites := list -}}
+{{- range listFiles "/sites"}}{{if not (hasPrefix "." .)}}{{$sites = append $sites .}}{{end}}{{end -}}
+{{- $apps := list -}}
+{{- range listFiles "/apps"}}{{if and (not (hasPrefix "." .)) (fileExists (printf "/apps/%s/route.caddy" .))}}{{$apps = append $apps .}}{{end}}{{end -}}
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lantern · {{.Host}} by MHZ</title>
+<link rel="stylesheet" href="/_shared/style.css">
+<script defer src="/_shared/lantern.js"></script>
+</head>
+<body>
+<header class="lantern-bar">
+  <nav class="crumbs"><a class="home" href="/">lantern</a> by <a href="https://github.com/kiswelrg/" target="_blank">HZ Mei</a></nav>
+</header>
+<main class="page">
+<h1>Docs &amp; tools on {{.Host}}</h1>
+<p class="lead">Docs, READMEs, showcases and small tools from various repos.</p>
+<p class="lead">Ctrl+F to search.</p>
+
+<h2>Docs</h2>
+{{- if $sites}}
+<ul class="cards">
+{{- range $sites}}
+  {{template "card" (dict "name" . "dir" (printf "/sites/%s" .))}}
+{{- end}}
+</ul>
+{{- else}}
+<p class="empty">Nothing yet. Add one with <code>bin/lantern add-site &lt;name&gt; &lt;path&gt;</code>.</p>
+{{- end}}
+
+<h2>Apps</h2>
+{{- if $apps}}
+<ul class="cards">
+{{- range $apps}}
+  {{template "card" (dict "name" . "dir" (printf "/apps/%s" .) "app" true)}}
+{{- end}}
+</ul>
+{{- else}}
+<p class="empty">No apps. Add one with <code>bin/lantern add-app &lt;name&gt;</code>.</p>
+{{- end}}
+</main>
+</body>
+</html>

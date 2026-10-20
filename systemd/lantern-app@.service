@@ -1,0 +1,22 @@
+# lantern — one template unit for every app in apps/<name>/.
+#   systemctl --user enable --now lantern-app@<name>
+# Template: `bin/lantern install` fills in @LANTERN_ROOT@ and copies it to
+# ~/.config/systemd/user/. Edit this file, not the installed copy.
+[Unit]
+Description=lantern app: %i
+Documentation=file://@LANTERN_ROOT@/apps/%i
+
+[Service]
+Type=exec
+WorkingDirectory=@LANTERN_ROOT@/apps/%i
+# User services start with a minimal PATH; include ~/.local/bin for uv.
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment=APP_NAME=%i
+Environment=BASE_PATH=/%i/
+EnvironmentFile=@LANTERN_ROOT@/apps/%i/app.env
+ExecStart=@LANTERN_ROOT@/apps/%i/run.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,66 @@
+{{- /*
+  Renders one Markdown doc. Caddy sets http.vars.lantern_doc to the doc's path
+  (relative to sites/, after the README rewrite). The doc is read with readFile,
+  never executed as a template, so `{{ }}` in docs is shown as-is.
+
+  Frontmatter (all optional): title, style, scripts, description.
+*/ -}}
+{{- $doc := placeholder "http.vars.lantern_doc" -}}
+{{- $src := readFile $doc -}}
+{{- $meta := dict -}}
+{{- $body := $src -}}
+{{- /* Only parse frontmatter when it's fenced on both ends: a doc may start with a `---` rule. */ -}}
+{{- if regexMatch `^\s*(---|\+\+\+)[ \t]*\r?\n(?s:.*?)\n(---|\+\+\+)[ \t]*(\r?\n|$)` $src -}}
+  {{- $md := splitFrontMatter $src -}}
+  {{- $meta = $md.Meta -}}
+  {{- $body = $md.Body -}}
+{{- end -}}
+{{- $parts := splitList "/" (trimPrefix "/" $doc) -}}
+{{- $stem := regexReplaceAll `(?i)\.(md|markdown)$` (last $parts) "" -}}
+{{- $isIndex := regexMatch `^(?i:readme|index)$` $stem -}}
+{{- $h1 := regexFind `^\s*#[ \t]+[^\n]+` $body -}}
+
+{{- $title := $stem -}}
+{{- if $meta.title}}{{$title = toString $meta.title}}
+{{- else if $h1}}{{$title = trim (regexReplaceAll `^\s*#[ \t]+|[ \t]+#+[ \t]*$` $h1 "")}}
+{{- else if and $isIndex (gt (len $parts) 1)}}{{$title = index $parts (sub (len $parts) 2)}}
+{{- end -}}
+
+{{- $style := regexReplaceAll `[^a-z0-9_-]` (toString (default "style" $meta.style)) "" -}}
+
+{{- $scripts := list -}}
+{{- with $meta.scripts}}{{if kindIs "slice" .}}{{$scripts = .}}{{else}}{{$scripts = list .}}{{end}}{{end -}}
+{{- if contains "```mermaid" $body}}{{$scripts = append $scripts "mermaid"}}{{end -}}
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{html $title}}</title>
+{{- with $meta.description}}
+<meta name="description" content="{{html (toString .)}}">
+{{- end}}
+<link rel="stylesheet" href="/_shared/{{$style}}.css">
+{{- range uniq $scripts}}
+<script defer src="/_shared/vendor/{{regexReplaceAll `[^a-z0-9_-]` (toString .) ""}}.min.js"></script>
+{{- end}}
+<script defer src="/_shared/lantern.js"></script>
+</head>
+<body>
+<header class="lantern-bar">
+  <nav class="crumbs">
+    <a class="home" href="/">lantern</a>
+    {{- $acc := "" -}}
+    {{- range initial $parts}}{{$acc = printf "%s/%s" $acc .}}<span class="sep">/</span><a href="{{html $acc}}/">{{html .}}</a>{{end -}}
+    {{- if not $isIndex}}<span class="sep">/</span><span class="here">{{html $stem}}</span>{{end}}
+  </nav>
+</header>
+<main class="doc">
+{{- if and $meta.title (not $h1)}}
+<h1>{{html $title}}</h1>
+{{- end}}
+{{markdown $body}}
+</main>
+</body>
+</html>

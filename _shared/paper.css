@@ -1,0 +1,35 @@
+/* lantern — "paper" variant: serif, warm, narrower measure. Pick it per doc with
+   frontmatter `style: paper`. Only overrides; everything else comes from style.css. */
+@import url("style.css");
+
+:root {
+  --bg: #fbf8f1;
+  --bg-soft: #f3eee2;
+  --fg: #2b2620;
+  --fg-muted: #7a6f60;
+  --border: #e2d9c6;
+  --accent: #9a3412;
+  --accent-soft: #f6e7d8;
+  --code-bg: #f3eee2;
+  --font-body: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Charter, "Bitstream Charter", Georgia, serif;
+  --measure: 42rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1915;
+    --bg-soft: #24201b;
+    --fg: #ece4d6;
+    --fg-muted: #a89c88;
+    --border: #3a332a;
+    --accent: #f0a46c;
+    --accent-soft: #33261b;
+    --code-bg: #24201b;
+  }
+}
+
+body { font-size: 18px; line-height: 1.7; }
+.doc h1, .doc h2, .doc h3 { font-weight: 600; letter-spacing: -0.01em; }
+.doc h2 { border-bottom: 0; }
+.doc > p { text-align: justify; hyphens: auto; }
+.lantern-bar { font-family: system-ui, sans-serif; }

@@ -1,0 +1,2 @@
+# Proxies /_example-app/ to this app (see the lantern-app snippet in the Caddyfile).
+import lantern-app _example-app 8199

@@ -1,0 +1,24 @@
+{{- $code := placeholder "http.error.status_code" -}}
+{{- $text := placeholder "http.error.status_text" -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{$code}} {{html $text}}</title>
+<link rel="stylesheet" href="/_shared/style.css">
+</head>
+<body>
+<header class="lantern-bar">
+  <nav class="crumbs"><a class="home" href="/">lantern</a></nav>
+</header>
+<main class="page error-page">
+<p class="code">{{$code}}</p>
+<p>{{if eq $code "404"}}Nothing here.{{else if has $code (list "502" "503" "504")}}This app isn't running right now.{{else}}{{html $text}}{{end}}</p>
+{{- if ge (atoi $code) 500}}
+<details><summary>Details</summary><pre>{{html (placeholder "http.error.message")}}</pre></details>
+{{- end}}
+<p><a href="/">Back to everything</a></p>
+</main>
+</body>
+</html>

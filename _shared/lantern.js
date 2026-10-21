@@ -83,8 +83,9 @@
     window.mermaid.run({ querySelector: "pre.mermaid" });
   }
 
-  // Elements with data-app-status="/name/" get an up/down badge. A reverse proxy
-  // with nothing behind it answers 502, so any status below 500 means "up".
+  // Elements with data-app-status="/_status/name" get an up/down badge. That route
+  // (Caddyfile) proxies a HEAD to the app; with nothing behind it Caddy answers 502,
+  // so any status below 500 means "up" (401 included: the app asks for a login).
   function checkApps() {
     document.querySelectorAll("[data-app-status]").forEach(function (el) {
       fetch(el.getAttribute("data-app-status"), { method: "HEAD", cache: "no-store", redirect: "manual" })

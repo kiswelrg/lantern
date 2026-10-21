@@ -57,10 +57,24 @@ Work top to bottom. Each phase should end in a working, testable state.
 - [x] Document the path-prefix requirement for apps (README; apps also get `X-Forwarded-Prefix`, `$BASE_PATH`)
 - [ ] Round trip through the real units once Caddy is installed
 
+## Phase 4b — Apps elsewhere, apps on their own port
+- [x] Mental model: app **kind** (server / ssh tunnel / proxy, from `app.env`) × **mount**
+      (`/<name>/` stripped or kept, or an own LAN port)
+- [x] `--own-port` on all three: `port.caddy` site block on 8201–8299, `/<name>/` redirects,
+      `HEAD /_status/<name>` for the badge, error page links lantern via `lantern_home`
+- [x] `add-tunnel <name> <ssh-host> <host:port>`: generated `run.sh` (`ssh -N -L`, BatchMode)
+- [x] `add-proxy <name> <host:port>`: no process, no unit; a 127.0.0.1 upstream keeps the
+      visitor's Host (like an app lantern runs)
+- [x] `check` / `list` / `doctor` / `rm-app` know the kinds; `check` follows app redirects, takes 401
+- [x] Landing page: own-port links, dots for tunnel (green) and proxy (blue) with a legend
+- [ ] HTTPS upstreams for `add-proxy` (self-signed: `tls_insecure_skip_verify`)
+- [ ] Round trip through the real units: a tunnel once key login to its ssh host works
+
 ## Phase 5 — Landing page
 - [x] `/` lists all sites and apps (title from README frontmatter / leading `# heading`, else the
       name; `description` from frontmatter), live on every request via `_shared/index.html`
-- [x] App up/down badge: client-side `HEAD /<name>/` (502 = down), no backend
+- [x] App up/down badge: client-side `HEAD /_status/<name>` (502 = down), no backend; the route
+      drops `WWW-Authenticate` so an app's Basic auth doesn't prompt on the landing page
 
 ## Phase 5b — Claude skill (`skill/`)
 - [x] CLI groundwork: `add-site --dry-run/--whole-repo` + exposure scan, `new-site`, `check`,

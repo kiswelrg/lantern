@@ -6,9 +6,10 @@ description: Publish docs, pages or small web apps on lantern, the LAN docs/app 
 # lantern
 
 Lantern (Caddy) serves folders and small apps from this machine to the work LAN at
-`http://<host>:<port>/<name>/`. The `lantern` CLI does all the mechanics; `lantern help`
-lists its commands and `lantern list` shows what is served now. `LANTERN_ROOT` is the parent
-of this skill's resolved directory (`readlink -f` it); its `README.md` is the user manual.
+`http://<host>:<port>/<name>/`, or at an app's own port. The `lantern` CLI does all the
+mechanics; `lantern help` lists its commands and `lantern list` shows what is served now.
+`LANTERN_ROOT` is the parent of this skill's resolved directory (`readlink -f` it); its
+`README.md` is the user manual.
 
 ## Jobs
 
@@ -18,14 +19,15 @@ Name the job, then read its section before the survey. One request can hold seve
 - **Docs**: an existing folder of docs or a README becomes a site → [sites.md](sites.md) § Existing docs
 - **Blank site**: a new, empty site → [sites.md](sites.md) § Blank site
 - **Page**: a new `.md` or `.html` page in an existing site → [sites.md](sites.md) § Pages
-- **App**: anything that needs a running process → [apps.md](apps.md)
+- **App**: anything lantern proxies: a server it runs, an ssh tunnel to a service elsewhere,
+  or an HTTP service this machine already reaches → [apps.md](apps.md)
 
 ## Steps
 
 1. **Survey.** Work out every value the job needs from the repo and `lantern list`: name,
-   folder, prefix mode, run command. The name is the repo or folder name in lowercase-kebab
-   unless the user gave one. Run the job's audit. Done when you could run every command
-   without asking the user anything.
+   folder, app kind and mount, run command. The name is the repo or folder name in
+   lowercase-kebab unless the user gave one. Run the job's audit. Done when you could run
+   every command without asking the user anything.
 2. **Proposal.** One message: the name and LAN URL; the commands you will run; the files you
    will create or edit; the **exposure** (below); the audit findings, each with the fix you
    offer. Then wait for the user's go. This is the only confirmation, so make it complete.
@@ -39,14 +41,15 @@ Name the job, then read its section before the survey. One request can hold seve
 ## Rules
 
 - **CLI for mechanics.** Symlinks in `sites/`, the app scaffold, ports, routes and reloads go
-  through `lantern`. In `apps/<name>/` you write only `run.sh` and `README.md`. When the CLI
-  can't do something the job needs, put that in the report.
+  through `lantern`. In `apps/<name>/` you write only `README.md`, and `run.sh` for a
+  server. When the CLI can't do something the job needs, put that in the report.
 - **Exposure.** A linked folder is readable by anyone on the LAN; only dotfiles,
   `node_modules/` and `__pycache__/` are hidden. Link the narrowest folder that holds the
   docs; a repo root (`--whole-repo`) only when the user picks it in the proposal. The proposal
   shows `lantern add-site <name> <dir> --dry-run` output plus your own read of config-like files
   in the folder (`*.json`, `*.yaml`, `*.toml`, `*.ini`, `*.cfg`, `*.conf`): name any tokens,
-  passwords, keys or connection strings you find.
+  passwords, keys or connection strings you find. A tunnel or proxy exposes a service from
+  another host: [apps.md](apps.md) § Exposure.
 - **Offline.** Pages load JS, CSS and fonts from `/_shared/` only; the LAN may have no
   internet. A library missing from `$LANTERN_ROOT/_shared/vendor/` is vendored there (steps in
   its `README.md`) once the user accepts it in the proposal.

@@ -24,15 +24,25 @@ Adding a doc = create a symlink. Adding an app = drop a folder + one enable comm
   `.html` files are served as-is (for showcases needing layout/interactivity).
 - **One shared look:** stylesheets in `_shared/` (`style.css` default, more variants allowed).
   A doc picks one via frontmatter `style: <name>`; HTML pages link `/_shared/<name>.css`.
-- **Apps** (things needing a process): `apps/<name>/` is a machine-local wrapper (gitignored
-  like `sites/`) with `run.sh`, `app.env` (holds `PORT`), `route.caddy` and `README.md`
-  (landing card); the app's code lives in its own repo or the content repo. Run by ONE
-  systemd user template unit `lantern-app@.service`; routed by the Caddyfile
-  `import apps/*/route.caddy` glob, via the `(lantern-app)` snippet (prefix stripped) or
-  `(lantern-app-keep)` (prefix kept, `add-app --keep-prefix`).
+- **Apps** (anything lantern reverse-proxies): `apps/<name>/` is a machine-local wrapper
+  (gitignored like `sites/`) with `app.env`, `route.caddy`, `README.md` (landing card) and,
+  when something runs, `run.sh`; the app's code lives in its own repo or the content repo.
+  `app.env` says the **kind**: a server (`add-app`, `PORT`) or an ssh tunnel (`add-tunnel`,
+  `PORT` + `TUNNEL_VIA`/`TUNNEL_TO`, run.sh is `ssh -N -L`), both run by ONE systemd user
+  template unit `lantern-app@.service`; or a proxy (`add-proxy`, `UPSTREAM`; nothing runs, no
+  unit; a `127.0.0.1` upstream is routed with the `lantern-app` snippets). The **mount**: `/<name>/` with the prefix stripped (`(lantern-app)`/`(lantern-proxy)`)
+  or kept (`--keep-prefix`, the `-keep` snippets), both via the Caddyfile
+  `import apps/*/route.caddy` glob inside the main site; or the app's **own port**
+  (`--own-port`, `LAN_PORT`): `port.caddy` (top-level `import apps/*/port.caddy`,
+  `(lantern-own-port-site)`) serves it at `/`, and its `route.caddy` (`(lantern-own-port)`)
+  redirects `/<name>/` there; both take the upstream's Host header as their last argument
+  (`{hostport}` or `{upstream_hostport}`). Every app snippet also answers `HEAD /_status/<name>`
+  on the main port: the landing page's up/down badge.
 - **Directories** with a `README.md` (or `readme.md`, `index.md`) render it as the index, unless
   they have an `index.html`; otherwise Caddy `browse` listing via `_shared/browse.html`.
-- **Landing page** `/` is `_shared/index.html`, a template that lists `sites/` and `apps/` live.
+- **Landing page** `/` is `_shared/index.html`, a template that lists `sites/` and `apps/` live;
+  app cards read `app.env` (own-port link, green dot = tunnel, blue dot = proxy). Every card
+  opens in a new tab.
 - **Caddy ≥ 2.8** required (`readFile`); developed against 2.11.7. Ubuntu's apt package (2.6) is too old.
 
 ## Layout
@@ -57,7 +67,7 @@ lantern/
 │   ├── style.css          # default style (+ variants like paper.css that @import it)
 │   └── vendor/            # mermaid, etc. — vendored, NO CDN (versions in vendor/README.md)
 ├── sites/                 # symlinks only (gitignored except .gitkeep and _example/)
-└── apps/<name>/{run.sh, app.env, route.caddy, README.md}   # gitignored; _example-app/ is committed
+└── apps/<name>/{run.sh, app.env, route.caddy, port.caddy, README.md}   # gitignored; _example-app/ is committed
 ../lantern-content/        # separate git repo: pages/<name>/, apps/<name>/ (created on first use)
 ```
 
@@ -83,7 +93,9 @@ Mermaid also auto-loads when the body contains a ```` ```mermaid ```` block.
   so it can read files under `$HOME` directly. Requires `loginctl enable-linger $USER`.
   Port 80 is optional (system unit with `User=` + `CAP_NET_BIND_SERVICE`) — ask before doing it.
 - Site address must be `:PORT` / `http://` so Caddy does NOT attempt automatic HTTPS.
-- App ports: allocate from `8101–8199`; `add-app` picks the next free one and writes `app.env`.
+- App ports: allocate from `8101–8199` (where apps listen on 127.0.0.1) and, for `--own-port`,
+  `8201–8299` (where Caddy serves them to the LAN); the CLI picks the next free one and writes
+  `app.env`.
 - Work LAN may have unreliable internet: vendor all JS/CSS/fonts into `_shared/vendor/`.
 - Keep it boring: bash + Caddyfile + plain HTML/CSS/JS. Ask before adding a language runtime
   or build step.
@@ -109,8 +121,29 @@ Mermaid also auto-loads when the body contains a ```` ```mermaid ```` block.
   `(lantern-app)` snippet uses `handle_path` and sends `X-Forwarded-Prefix`; the unit sets
   `BASE_PATH`. Apps must use relative URLs or a configurable base path. Frameworks that serve
   under a base path themselves (Streamlit, marimo, Dash) use `(lantern-app-keep)` instead;
-  Gradio and uvicorn's `--root-path` expect the prefix stripped.
+  Gradio and uvicorn's `--root-path` expect the prefix stripped. Apps that can't be told a
+  base path (device UIs, vendor dashboards) use `--own-port`.
   Subdomain routing (wildcard DNS) is a later option, not now.
+- **Own port**: cookies are scoped per host, not per port, so own-port apps share cookies with
+  each other (same cookie name = they log each other out). The landing page can't read a
+  cross-origin status, hence `HEAD /_status/<name>` on the main port, for every app. On an own
+  port `/` is the app's, so `error.html` links lantern through `vars lantern_home`.
+- **Badge and Basic auth**: a same-origin fetch that gets `401` + `WWW-Authenticate: Basic`
+  makes the browser show a login dialog, on the landing page. The `/_status/<name>` route
+  drops that header (`header_down -WWW-Authenticate`); a 401 there still counts as up. It asks
+  the app with `GET` (`method GET`): Python's `BaseHTTPRequestHandler` apps answer HEAD with 501.
+- Caddy's `reverse_proxy` honours `HTTP_PROXY`/`NO_PROXY` (lantern.service reads `lantern.env`):
+  a non-loopback upstream (`add-proxy`) goes through the proxy unless `NO_PROXY` covers it.
+  A remote upstream must get `Host: {upstream_hostport}`: with the visitor's Host, the local
+  proxy (mihomo) routed the request back to Caddy (431, a stack of `Via: 1.1 Caddy`). Anything
+  on 127.0.0.1 (servers, tunnels, local proxies) keeps the visitor's Host: apps check it
+  (relabel's `--allowed-host`) and build URLs from it. So `lantern check` requests the LAN
+  address, as colleagues do, with `--noproxy '*'`.
+- Caddyfile snippets must not import other snippets: a snippet that does mis-parses once it
+  is imported twice ("wrong argument count … after '302'"). Write each one out in full.
+- Tunnels under systemd have no terminal and no agent: run.sh uses `BatchMode=yes`,
+  `ExitOnForwardFailure=yes`, `ServerAlive*` (a dead link exits, the unit restarts it) and
+  `StrictHostKeyChecking=accept-new`. Key login is the user's one-time setup (`ssh-copy-id`).
 - Linux paths are case-sensitive; URL/site names should be lowercase-kebab.
 - systemd user units don't inherit the shell's environment: no proxy variables (uv's first-start
   downloads hang; they go in `lantern.env`, which every app unit reads) and a minimal PATH (uv
@@ -126,7 +159,7 @@ Mermaid also auto-loads when the body contains a ```` ```mermaid ```` block.
   apps with missing PORT or port collisions.
 - Smoke test with `curl`: a `.md` renders as HTML with the stylesheet link; a dir with
   README renders it; a `.html` is served raw; `/<site>/.git/config` returns 404;
-  an app route proxies.
+  an app route proxies; an own-port app answers at its root and `/<name>/` redirects there.
 
 ## Future (don't build yet — see TODO.md)
 Runnable code blocks: copy button (frontend only) → in-browser Python via Pyodide /

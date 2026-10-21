@@ -71,6 +71,38 @@ Apps that serve under a base path themselves (Streamlit `--server.baseUrlPath`,
 marimo `--base-url`, Dash `url_base_pathname`) need the prefix kept:
 `lantern add-app my-tool --keep-prefix`.
 
+Apps that insist on `/` and can't be told otherwise (camera and router web UIs, vendor
+dashboards, SPAs built with base `/`) get **their own port** instead:
+`lantern add-app my-tool --own-port` serves the app at `http://<host>:8201/` (the next free
+port in 8201–8299), and `/my-tool/` on the main port redirects there. Browsers share cookies
+across ports of one host, so two such apps using the same cookie name log each other out.
+
+### Services that run elsewhere
+Two more kinds of app, each one command. Both take `--own-port` or `--keep-prefix` too:
+
+```bash
+# A plain-HTTP service lantern doesn't start: elsewhere, or already running here
+# (127.0.0.1:<port>, e.g. one you run by hand). Nothing runs under lantern, so no unit.
+lantern add-proxy router 10.0.5.1:80 --own-port
+
+# A service only reachable through ssh. run.sh is written for you: an ssh -N -L forward
+# from the app's port to <host:port> as the ssh host sees it.
+lantern add-tunnel camera-9 ssh://user@jump.example:2222 10.0.9.86:80 --own-port
+ssh -o BatchMode=yes ssh://user@jump.example:2222 true   # must work without a prompt
+systemctl --user enable --now lantern-app@camera-9
+```
+
+A service on 127.0.0.1 gets the visitor's `Host` header, like an app lantern runs (so Host
+checks and the URLs it builds see lantern's address); a service elsewhere gets its own.
+The ssh host can also be a `Host` alias from `~/.ssh/config`. The unit has no terminal and
+no ssh-agent, so the tunnel needs key login without a passphrase prompt (`ssh-copy-id` once);
+systemd restarts it when the link drops. Caddy reaches a proxy's host through `HTTP_PROXY`
+from `lantern.env` unless `NO_PROXY` covers it. Either kind puts a service from another
+network on the LAN with no login added by lantern: rely on the service's own.
+
+On the landing page a green dot marks an app behind an ssh tunnel, a blue one an app proxied
+from another host, and an app on its own port shows `:8201/` instead of `/name/`.
+
 Python apps use **uv**: a single-file app with PEP 723 metadata runs with
 `exec uv run --script app.py`; an app in another repo with
 `exec uv run --project /path/to/repo …`. `apps/_example-app/` is a working example.
@@ -105,12 +137,12 @@ All shared CSS lives in `_shared/`. Edit `style.css` to change the default look 
 
 ## Other commands
 ```bash
-lantern list           # sites and apps, with targets / ports / status
+lantern list           # sites and apps, with targets / ports / status / tunnels / proxies
 lantern check X        # live check of one site or app
 lantern rm-site X      # remove a site (deletes the symlink only)
 lantern rm-app X       # stop + disable an app, remove apps/X/ (--force if it holds other files)
 lantern doctor         # caddy, service, port, broken links, port clashes
-lantern reload         # validate + reload Caddy (only needed for new apps)
+lantern reload         # validate + reload Caddy (add-app/-tunnel/-proxy do it when lantern runs)
 tests/smoke.sh         # curl + CLI smoke tests on a throwaway copy (or: tests/smoke.sh http://host:8080)
 ```
 
@@ -139,6 +171,7 @@ bin/lantern doctor
 ```
 
 If ufw is enabled, allow the port from the LAN only, e.g.
-`sudo ufw allow from 192.168.1.0/24 to any port 8080 proto tcp`.
+`sudo ufw allow from 192.168.1.0/24 to any port 8080 proto tcp`, and the same for
+`8201:8299` once you serve apps on their own port.
 
 Port 80 instead of 8080 would need a system unit with `CAP_NET_BIND_SERVICE`; not set up.

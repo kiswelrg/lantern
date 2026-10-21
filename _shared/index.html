@@ -19,11 +19,24 @@
     {{- else if $h1}}{{$title = trim (regexReplaceAll `^\s*#[ \t]+|[ \t]+#+[ \t]*$` $h1 "")}}{{end -}}
     {{- $desc = trimAll `"' ` (trimPrefix "description:" (regexFind `(?m)^description:[ \t]*\S.*$` $fm)) -}}
   {{- end}}
-  <li><a href="/{{html $name}}/">
+  {{- /* Apps: app.env (written by bin/lantern) says how the app is reached. */ -}}
+  {{- $lan := "" -}}{{- $tunnel := "" -}}{{- $upstream := "" -}}
+  {{- if and .app (fileExists (printf "%s/app.env" $dir)) -}}
+    {{- $env := readFile (printf "%s/app.env" $dir) -}}
+    {{- $lan = trimPrefix "LAN_PORT=" (regexFind `(?m)^LAN_PORT=[0-9]+` $env) -}}
+    {{- $tunnel = trimPrefix "TUNNEL_TO=" (regexFind `(?m)^TUNNEL_TO=\S+` $env) -}}
+    {{- $upstream = trimPrefix "UPSTREAM=" (regexFind `(?m)^UPSTREAM=\S+` $env) -}}
+  {{- end -}}
+  {{- /* An app on its own port is linked there directly. */ -}}
+  {{- $href := printf "/%s/" $name -}}{{- $path := $href -}}
+  {{- if $lan}}{{$href = printf "http://%s:%s/" .host $lan}}{{$path = printf ":%s/" $lan}}{{end}}
+  <li><a href="{{html $href}}" target="_blank" rel="noopener">
     <div class="title">{{html $title}}
       {{- if not $ok}} <span class="badge broken">broken link</span>{{end}}
-      {{- if .app}} <span class="badge" data-app-status="/{{html $name}}/">…</span>{{end}}</div>
-    <div class="path">/{{html $name}}/</div>
+      {{- if .app}} <span class="badge" data-app-status="/_status/{{html $name}}">…</span>{{end}}</div>
+    <div class="path">{{html $path}}
+      {{- if $tunnel}} <span class="dot tunnel" title="ssh tunnel to {{html $tunnel}}"></span>
+      {{- else if and $upstream (not (hasPrefix "127.0.0.1:" $upstream))}} <span class="dot remote" title="proxied from {{html $upstream}}"></span>{{end}}</div>
     {{- with $desc}}
     <div class="desc">{{html .}}</div>
     {{- end}}
@@ -34,6 +47,12 @@
 {{- range listFiles "/sites"}}{{if not (hasPrefix "." .)}}{{$sites = append $sites .}}{{end}}{{end -}}
 {{- $apps := list -}}
 {{- range listFiles "/apps"}}{{if and (not (hasPrefix "." .)) (fileExists (printf "/apps/%s/route.caddy" .))}}{{$apps = append $apps .}}{{end}}{{end -}}
+{{- /* Which dots the legend explains: only those some card shows. */ -}}
+{{- $tunnels := false -}}{{- $remotes := false -}}
+{{- range $apps}}{{$f := printf "/apps/%s/app.env" .}}{{if fileExists $f}}{{$e := readFile $f}}
+  {{- if regexMatch `(?m)^TUNNEL_TO=\S` $e}}{{$tunnels = true}}
+  {{- else}}{{$u := trimPrefix "UPSTREAM=" (regexFind `(?m)^UPSTREAM=\S+` $e)}}{{if and $u (not (hasPrefix "127.0.0.1:" $u))}}{{$remotes = true}}{{end}}{{end}}
+{{- end}}{{end -}}
 
 <!doctype html>
 <html lang="en">
@@ -51,7 +70,7 @@
 <main class="page">
 <h1>Docs &amp; tools on {{.Host}}</h1>
 <p class="lead">Docs, READMEs, showcases and small tools from various repos.</p>
-<p class="lead">Ctrl+F to search.</p>
+<p class="lead">Ctrl+F to quickly locate contents on page.</p>
 
 <h2>Docs</h2>
 {{- if $sites}}
@@ -65,10 +84,15 @@
 {{- end}}
 
 <h2>Apps</h2>
+{{- if or $tunnels $remotes}}
+<p class="legend">
+  {{- if $tunnels}}<span><span class="dot tunnel"></span>through an ssh tunnel</span>{{end}}
+  {{- if $remotes}}<span><span class="dot remote"></span>proxied from another host</span>{{end}}</p>
+{{- end}}
 {{- if $apps}}
 <ul class="cards">
 {{- range $apps}}
-  {{template "card" (dict "name" . "dir" (printf "/apps/%s" .) "app" true)}}
+  {{template "card" (dict "name" . "dir" (printf "/apps/%s" .) "app" true "host" $.Host)}}
 {{- end}}
 </ul>
 {{- else}}

@@ -12,10 +12,24 @@
 	admin localhost:{$LANTERN_ADMIN_PORT:2019}
 }
 
-# Routing for one app. apps/<name>/route.caddy normally contains just:
-#     import lantern-app <name> <port>
-# The /<name> prefix is stripped before proxying; the app gets it back in
+# Routing for one app. apps/<name>/route.caddy (and port.caddy, for an app on its own
+# port) holds one import line written by bin/lantern. Snippets don't import each other:
+# a snippet that imports another breaks the parse once it's used twice.
+#
+# Every app also answers HEAD /_status/<name> on the main port, for the landing page's
+# up/down badge. It asks the app with GET (not every server implements HEAD); a 401 counts
+# as up, and its WWW-Authenticate header is dropped, or the browser would ask for the
+# app's login on the landing page.
+#
+# An app lantern runs on 127.0.0.1:<port> (a server or an ssh tunnel) gets the visitor's
+# Host header, so URLs it builds point back at lantern. A service elsewhere (add-proxy)
+# gets its own: forward proxies (HTTP_PROXY in lantern.env) and virtual hosts route by it,
+# and with the visitor's Host a forward proxy sends the request right back here.
+
+# At /<name>/; the prefix is stripped before proxying, and the app gets it back in
 # X-Forwarded-Prefix in case it needs to build absolute URLs.
+#     import lantern-app <name> <port>
+#     import lantern-proxy <name> <host>:<port>
 (lantern-app) {
 	redir /{args[0]} /{args[0]}/ 308
 	handle_path /{args[0]}/* {
@@ -23,11 +37,44 @@
 			header_up X-Forwarded-Prefix /{args[0]}
 		}
 	}
+	@status-{args[0]} {
+		method HEAD
+		path /_status/{args[0]}
+	}
+	handle @status-{args[0]} {
+		rewrite * /
+		method GET
+		reverse_proxy 127.0.0.1:{args[1]} {
+			header_down -WWW-Authenticate
+		}
+	}
+}
+(lantern-proxy) {
+	redir /{args[0]} /{args[0]}/ 308
+	handle_path /{args[0]}/* {
+		reverse_proxy {args[1]} {
+			header_up Host {upstream_hostport}
+			header_up X-Forwarded-Prefix /{args[0]}
+		}
+	}
+	@status-{args[0]} {
+		method HEAD
+		path /_status/{args[0]}
+	}
+	handle @status-{args[0]} {
+		rewrite * /
+		method GET
+		reverse_proxy {args[1]} {
+			header_up Host {upstream_hostport}
+			header_down -WWW-Authenticate
+		}
+	}
 }
 
-# Same, but the /<name> prefix is kept: for apps that serve under a base path
-# themselves (Streamlit --server.baseUrlPath, marimo --base-url, Dash url_base_pathname).
-#     import lantern-app-keep <name> <port>      (add-app --keep-prefix)
+# Same, but the /<name> prefix is kept (--keep-prefix): for apps that serve under a base
+# path themselves (Streamlit --server.baseUrlPath, marimo --base-url, Dash url_base_pathname).
+#     import lantern-app-keep <name> <port>
+#     import lantern-proxy-keep <name> <host>:<port>
 (lantern-app-keep) {
 	redir /{args[0]} /{args[0]}/ 308
 	handle /{args[0]}/* {
@@ -35,7 +82,83 @@
 			header_up X-Forwarded-Prefix /{args[0]}
 		}
 	}
+	@status-{args[0]} {
+		method HEAD
+		path /_status/{args[0]}
+	}
+	handle @status-{args[0]} {
+		rewrite * /{args[0]}/
+		method GET
+		reverse_proxy 127.0.0.1:{args[1]} {
+			header_down -WWW-Authenticate
+		}
+	}
 }
+(lantern-proxy-keep) {
+	redir /{args[0]} /{args[0]}/ 308
+	handle /{args[0]}/* {
+		reverse_proxy {args[1]} {
+			header_up Host {upstream_hostport}
+			header_up X-Forwarded-Prefix /{args[0]}
+		}
+	}
+	@status-{args[0]} {
+		method HEAD
+		path /_status/{args[0]}
+	}
+	handle @status-{args[0]} {
+		rewrite * /{args[0]}/
+		method GET
+		reverse_proxy {args[1]} {
+			header_up Host {upstream_hostport}
+			header_down -WWW-Authenticate
+		}
+	}
+}
+
+# At the root of the app's own LAN port (--own-port), for apps that need "/" (absolute
+# URLs they can't be told about: device UIs, vendor dashboards). The last argument is the
+# Host header the upstream gets: the visitor's ({hostport} in port.caddy; {host}:<lan-port>
+# in route.caddy, so the badge asks as a visit to the app's port would) or {upstream_hostport}.
+#   apps/<name>/port.caddy   import lantern-own-port-site <name> <lan-port> <upstream> <host>
+#   apps/<name>/route.caddy  import lantern-own-port <name> <lan-port> <upstream> <host>
+# The first is the app's own site; the second keeps /<name>/ on the main port as a
+# redirect to it, plus the HEAD /_status/<name> route (the landing page can't ask the
+# other port: that's cross-origin, so it can't read the status).
+(lantern-own-port-site) {
+	http://:{args[1]} {
+		reverse_proxy {args[2]} {
+			header_up Host {args[3]}
+		}
+		handle_errors {
+			# error.html links styles and home through the main port; here "/" is the app's.
+			vars lantern_home http://{host}:{$LANTERN_PORT:8080}
+			root * {$LANTERN_ROOT}/_shared
+			rewrite * /error.html
+			templates
+			file_server
+		}
+	}
+}
+(lantern-own-port) {
+	redir /{args[0]} http://{host}:{args[1]}/ 302
+	redir /{args[0]}/* http://{host}:{args[1]}/ 302
+	@status-{args[0]} {
+		method HEAD
+		path /_status/{args[0]}
+	}
+	handle @status-{args[0]} {
+		rewrite * /
+		method GET
+		reverse_proxy {args[2]} {
+			header_up Host {args[3]}
+			header_down -WWW-Authenticate
+		}
+	}
+}
+
+# Apps on their own port (one port.caddy per such app; zero is fine).
+import {$LANTERN_ROOT}/apps/*/port.caddy
 
 http://:{$LANTERN_PORT:8080} {
 	encode zstd gzip

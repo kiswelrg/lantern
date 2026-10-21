@@ -284,6 +284,20 @@ pre.mermaid {
 .badge.up { color: var(--ok); }
 .badge.down, .badge.broken { color: var(--bad); }
 
+/* How an app is reached (landing page): green = ssh tunnel, blue = another host. */
+.dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: 0.4rem;
+  border-radius: 50%;
+  vertical-align: 0.05rem;
+}
+.dot.tunnel { background: var(--ok); }
+.dot.remote { background: var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; margin: -0.25rem 0 0.75rem; font-size: 0.8rem; color: var(--fg-muted); }
+.legend .dot { margin: 0 0.4rem 0 0; }
+
 .empty { color: var(--fg-muted); font-style: italic; }
 
 table.listing { width: 100%; border-collapse: collapse; font-size: 0.95rem; }

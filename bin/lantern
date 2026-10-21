@@ -6,14 +6,16 @@ LANTERN_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 SITES="$LANTERN_ROOT/sites"
 APPS="$LANTERN_ROOT/apps"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-APP_PORT_MIN=8101
+APP_PORT_MIN=8101 # where apps listen, on 127.0.0.1
 APP_PORT_MAX=8199
+LAN_PORT_MIN=8201 # where --own-port apps are served to the LAN
+LAN_PORT_MAX=8299
 MIN_CADDY="2.8.0" # readFile in templates
 
 SKILL_LINK="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/lantern"
 BIN_LINK="$HOME/.local/bin/lantern"
-# Files add-app writes; rm-app refuses to delete anything else without --force.
-APP_SCAFFOLD=(run.sh app.env route.caddy README.md)
+# Files add-app/add-tunnel/add-proxy write; rm-app refuses to delete anything else without --force.
+APP_SCAFFOLD=(run.sh app.env route.caddy port.caddy README.md)
 
 # Local settings (lantern.env, gitignored): LANTERN_PORT, LANTERN_CONTENT.
 if [[ -f "$LANTERN_ROOT/lantern.env" ]]; then
@@ -41,23 +43,70 @@ host_addr() {
 
 url_for() { printf 'http://%s:%s/%s/' "$(host_addr)" "$LANTERN_PORT" "$1"; }
 
+# LAN URL of a site or app: /<name>/ on the main port, or an --own-port app's own port.
+public_url() {
+  local lan=""
+  [[ -d "$APPS/$1" ]] && lan="$(lan_port "$APPS/$1")"
+  if [[ -n "$lan" ]]; then printf 'http://%s:%s/' "$(host_addr)" "$lan"; else url_for "$1"; fi
+}
+
 valid_name() { [[ "$1" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; }
 
 name_taken() { [[ -e "$SITES/$1" || -L "$SITES/$1" || -e "$APPS/$1" ]]; }
 
 unit_active() { systemctl --user is-active --quiet "$1" 2>/dev/null; }
 
-# PORT from an app's app.env (empty if missing).
-app_port() {
+# KEY's value in an app's app.env (empty if missing).
+app_var() { # dir, key
   [[ -f "$1/app.env" ]] || return 0
-  sed -n 's/^[[:space:]]*PORT=["'\'']\{0,1\}\([0-9]*\).*/\1/p' "$1/app.env" | tail -n 1
+  sed -n "s/^[[:space:]]*$2=[\"']\{0,1\}\([^\"'[:space:]]*\).*/\1/p" "$1/app.env" | tail -n 1
 }
 
-# Port in route.caddy's `import lantern-app[-keep] <name> <port>` line (empty if customised).
-route_port() {
-  [[ -f "$1/route.caddy" ]] || return 0
-  awk '$1 == "import" && ($2 == "lantern-app" || $2 == "lantern-app-keep") { print $4 }' "$1/route.caddy" | tail -n 1
+# Numeric KEY from an app's app.env (empty if missing).
+app_num() { # dir, key
+  [[ -f "$1/app.env" ]] || return 0
+  sed -n "s/^[[:space:]]*$2=[\"']\{0,1\}\([0-9]*\).*/\1/p" "$1/app.env" | tail -n 1
 }
+
+app_port() { app_num "$1" PORT; }  # where the app listens on 127.0.0.1
+lan_port() { app_num "$1" LAN_PORT; } # set for --own-port apps
+
+# process (run.sh starts a server), tunnel (run.sh is an ssh forward) or proxy (nothing runs).
+app_kind() {
+  if [[ -n "$(app_var "$1" UPSTREAM)" ]]; then
+    echo proxy
+  elif [[ -n "$(app_var "$1" TUNNEL_TO)" ]]; then
+    echo tunnel
+  else
+    echo process
+  fi
+}
+
+# Where Caddy sends an app's requests, per app.env.
+app_upstream() {
+  local up port
+  up="$(app_var "$1" UPSTREAM)"
+  port="$(app_port "$1")"
+  if [[ -n "$up" ]]; then printf '%s' "$up"; elif [[ -n "$port" ]]; then printf '127.0.0.1:%s' "$port"; fi
+}
+
+# Upstream in route.caddy's import line (empty if customised).
+route_upstream() {
+  [[ -f "$1/route.caddy" ]] || return 0
+  awk '$1 != "import" { next }
+    $2 == "lantern-app" || $2 == "lantern-app-keep" { u = "127.0.0.1:" $4 }
+    $2 == "lantern-proxy" || $2 == "lantern-proxy-keep" { u = $4 }
+    $2 == "lantern-own-port" { u = $5 }
+    END { print u }' "$1/route.caddy"
+}
+
+# LAN port in a route.caddy / port.caddy own-port import line (empty if none).
+caddy_lan_port() { # file
+  [[ -f "$1" ]] || return 0
+  awk '$1 == "import" && ($2 == "lantern-own-port" || $2 == "lantern-own-port-site") { p = $4 } END { print p }' "$1"
+}
+
+valid_hostport() { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?:[0-9]{1,5}$ ]]; }
 
 app_dirs() {
   local d
@@ -71,14 +120,14 @@ listening_ports() { ss -Htln 2>/dev/null | awk '{ sub(/.*:/, "", $4); print $4 }
 
 port_listening() { listening_ports | grep -qx "$1"; }
 
-next_free_port() {
+next_free_port() { # min, max
   local used p d
-  used=" $(listening_ports | tr '\n' ' ') "
-  while read -r d; do used+="$(app_port "$d") "; done < <(app_dirs)
-  for ((p = APP_PORT_MIN; p <= APP_PORT_MAX; p++)); do
+  used=" $LANTERN_PORT $(listening_ports | tr '\n' ' ') "
+  while read -r d; do used+="$(app_port "$d") $(lan_port "$d") "; done < <(app_dirs)
+  for ((p = $1; p <= $2; p++)); do
     [[ "$used" == *" $p "* ]] || { echo "$p"; return; }
   done
-  die "no free port in $APP_PORT_MIN-$APP_PORT_MAX"
+  die "no free port in $1-$2"
 }
 
 # Validate the Caddyfile with the same env the service uses. Prints errors only.
@@ -257,59 +306,166 @@ cmd_rm_site() {
   echo "removed $1 (the target folder is untouched)"
 }
 
-cmd_add_app() {
-  local usage="usage: lantern add-app <name> [port] [--keep-prefix]"
-  local keep=0 args=() a
+# Mount flags shared by add-app, add-tunnel and add-proxy. Sets the caller's `mount`
+# (strip, keep or own) and `args` (the other arguments).
+parse_mount() { # usage, args...
+  local usage=$1 a
+  shift
+  mount=strip args=()
   for a in "$@"; do
     case "$a" in
-      --keep-prefix) keep=1 ;;
+      --keep-prefix) [[ "$mount" == strip ]] || die "$usage"; mount=keep ;;
+      --own-port) [[ "$mount" == strip ]] || die "$usage"; mount=own ;;
       -*) die "$usage" ;;
       *) args+=("$a") ;;
     esac
   done
+}
+
+new_app_name() {
+  valid_name "$1" || die "app names are lowercase-kebab (a-z, 0-9, -): '$1'"
+  name_taken "$1" && die "'$1' is already a site or app"
+  return 0
+}
+
+cmd_add_app() {
+  local usage="usage: lantern add-app <name> [port] [--keep-prefix | --own-port]"
+  local mount args
+  parse_mount "$usage" "$@"
   [[ ${#args[@]} -ge 1 && ${#args[@]} -le 2 ]] || die "$usage"
-  local name=${args[0]} port=${args[1]:-} dir d
-  valid_name "$name" || die "app names are lowercase-kebab (a-z, 0-9, -): '$name'"
-  name_taken "$name" && die "'$name' is already a site or app"
+  local name=${args[0]} port=${args[1]:-} d
+  new_app_name "$name"
   if [[ -n "$port" ]]; then
     [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1024 && port <= 65535)) || die "bad port: $port"
     while read -r d; do
-      [[ "$(app_port "$d")" == "$port" ]] && die "port $port is already used by app $(basename "$d")"
+      [[ "$(app_port "$d")" == "$port" || "$(lan_port "$d")" == "$port" ]] &&
+        die "port $port is already used by app $(basename "$d")"
     done < <(app_dirs)
   else
-    port="$(next_free_port)"
+    port="$(next_free_port "$APP_PORT_MIN" "$APP_PORT_MAX")"
   fi
-  dir="$APPS/$name"
+  scaffold_app "$name" process "$mount" "$port"
+}
+
+cmd_add_tunnel() {
+  local usage="usage: lantern add-tunnel <name> <ssh-host> <host:port> [--keep-prefix | --own-port]"
+  local mount args
+  parse_mount "$usage" "$@"
+  [[ ${#args[@]} -eq 3 ]] || die "$usage"
+  local name=${args[0]} via=${args[1]} to=${args[2]} port
+  new_app_name "$name"
+  [[ "$via" =~ ^[^-[:space:]][^[:space:]]*$ ]] ||
+    die "bad ssh host: '$via' (user@host, ssh://user@host:port or a ~/.ssh/config alias)"
+  valid_hostport "$to" || die "the tunnel target is <host>:<port>, as the ssh host sees it: '$to'"
+  port="$(next_free_port "$APP_PORT_MIN" "$APP_PORT_MAX")"
+  scaffold_app "$name" tunnel "$mount" "$port" "$to" "$via"
+}
+
+cmd_add_proxy() {
+  local usage="usage: lantern add-proxy <name> <host:port> [--keep-prefix | --own-port]"
+  local mount args
+  parse_mount "$usage" "$@"
+  [[ ${#args[@]} -eq 2 ]] || die "$usage"
+  local name=${args[0]} up=${args[1]}
+  new_app_name "$name"
+  up="${up#http://}" up="${up%/}"
+  up="${up/#localhost:/127.0.0.1:}"
+  valid_hostport "$up" || die "the upstream is <host>:<port> of a plain-HTTP service: '${args[1]}'"
+  scaffold_app "$name" proxy "$mount" "" "$up"
+}
+
+# Write apps/<name>/: app.env, route.caddy (+ port.caddy when it has its own port),
+# README.md and, unless nothing runs (proxy), run.sh. Then reload and print next steps.
+scaffold_app() { # name, kind, mount, port, target (tunnel/proxy), ssh host (tunnel)
+  local name=$1 kind=$2 mount=$3 port=$4 target=${5:-} via=${6:-}
+  local dir="$APPS/$name" upstream=$target lan="" base_path="/$name/"
+  [[ "$kind" == proxy ]] || upstream="127.0.0.1:$port"
+  if [[ "$mount" == own ]]; then
+    lan="$(next_free_port "$LAN_PORT_MIN" "$LAN_PORT_MAX")"
+    base_path=/
+  fi
   mkdir "$dir"
 
-  cat > "$dir/app.env" <<EOF
+  case "$kind" in
+    process)
+      cat > "$dir/app.env" <<EOF
 # Port the app listens on (127.0.0.1 only). Must match route.caddy.
 PORT=$port
 EOF
-
-  local snippet=lantern-app prefix_note
-  if ((keep)); then
-    snippet=lantern-app-keep
-    prefix_note="# The app is served under /$name/ and Caddy passes the full path through, so
-# the app itself must serve everything under \$BASE_PATH (e.g. Streamlit
-# --server.baseUrlPath, marimo --base-url, Dash url_base_pathname)."
-  else
-    prefix_note="# The app is served under /$name/ and Caddy strips that prefix, so use relative
-# URLs (or build absolute ones from \$BASE_PATH / the X-Forwarded-Prefix header)."
+      ;;
+    tunnel)
+      cat > "$dir/app.env" <<EOF
+# Local end of the ssh tunnel (127.0.0.1 only). Must match route.caddy.
+PORT=$port
+# run.sh forwards PORT through the ssh host TUNNEL_VIA (user@host, ssh://user@host:port
+# or a ~/.ssh/config alias) to TUNNEL_TO (host:port, as the ssh host sees it).
+TUNNEL_VIA=$via
+TUNNEL_TO=$target
+EOF
+      ;;
+    proxy)
+      cat > "$dir/app.env" <<EOF
+# What lantern proxies to: host:port of a plain-HTTP service it doesn't start, on this
+# machine (127.0.0.1) or elsewhere, so there is no unit. Must match route.caddy.
+UPSTREAM=$target
+EOF
+      [[ "$target" == 127.0.0.1:* ]] || printf '%s
+' \
+        "# Caddy reaches it through HTTP_PROXY from lantern.env unless NO_PROXY covers its host." >> "$dir/app.env"
+      ;;
+  esac
+  if [[ -n "$lan" ]]; then
+    cat >> "$dir/app.env" <<EOF
+# Port the app is served on to the LAN, at "/". Must match route.caddy and port.caddy.
+LAN_PORT=$lan
+EOF
+    [[ "$kind" != process ]] || printf '# The app sits at the root of its own port.\nBASE_PATH=/\n' >> "$dir/app.env"
   fi
 
-  cat > "$dir/route.caddy" <<EOF
-# Proxies /$name/ to this app (see the $snippet snippet in the Caddyfile).
-# Replace with custom Caddy directives if the app needs something else.
-import $snippet $name $port
+  # Anything on 127.0.0.1 gets the visitor's Host header; a service elsewhere gets its own.
+  local snippet=lantern-app arg=$port to_what="this app" host="{hostport}"
+  if [[ "$kind" == proxy ]]; then
+    to_what=$upstream arg=${upstream#127.0.0.1:}
+    [[ "$upstream" == 127.0.0.1:* ]] || snippet=lantern-proxy arg=$upstream host="{upstream_hostport}"
+  fi
+  if [[ "$mount" == own ]]; then
+    cat > "$dir/route.caddy" <<EOF
+# On lantern's main port: /$name/ redirects to port $lan, where the app is served
+# (port.caddy), and HEAD /_status/$name feeds the landing page's up/down badge.
+# See the lantern-own-port snippet in the Caddyfile.
+import lantern-own-port $name $lan $upstream ${host/#\{hostport\}/\{host\}:$lan}
 EOF
+    cat > "$dir/port.caddy" <<EOF
+# Serves $to_what on its own port $lan, at "/" (see lantern-own-port-site in the Caddyfile).
+import lantern-own-port-site $name $lan $upstream $host
+EOF
+  else
+    [[ "$mount" == strip ]] || snippet+=-keep
+    cat > "$dir/route.caddy" <<EOF
+# Proxies /$name/ to $to_what (see the $snippet snippet in the Caddyfile).
+# Replace with custom Caddy directives if the app needs something else.
+import $snippet $name $arg
+EOF
+  fi
 
   write_readme "$dir/README.md" "$name"
 
-  cat > "$dir/run.sh" <<EOF
+  local prefix_note
+  case "$mount" in
+    strip) prefix_note="# The app is served under /$name/ and Caddy strips that prefix, so use relative
+# URLs (or build absolute ones from \$BASE_PATH / the X-Forwarded-Prefix header)." ;;
+    keep) prefix_note="# The app is served under /$name/ and Caddy passes the full path through, so
+# the app itself must serve everything under \$BASE_PATH (e.g. Streamlit
+# --server.baseUrlPath, marimo --base-url, Dash url_base_pathname)." ;;
+    own) prefix_note="# The app is served at the root of its own LAN port ($lan), so absolute URLs
+# work; /$name/ on lantern's main port redirects there." ;;
+  esac
+  case "$kind" in
+    process)
+      cat > "$dir/run.sh" <<EOF
 #!/usr/bin/env bash
 # Started by lantern-app@$name.service with PORT (from app.env), APP_NAME and
-# BASE_PATH=/$name/ in the environment. Listen on 127.0.0.1:\$PORT.
+# BASE_PATH=$base_path in the environment. Listen on 127.0.0.1:\$PORT.
 #
 $prefix_note
 #
@@ -322,21 +478,50 @@ cd "\$(dirname "\$0")"
 # Placeholder: serves this folder. Replace with your server.
 exec uv run --no-project python -m http.server "\$PORT" --bind 127.0.0.1
 EOF
-  chmod +x "$dir/run.sh"
-
-  echo "created apps/$name/ (port $port$( ((keep)) && echo ", prefix kept"))"
-  if unit_active lantern; then
-    cmd_reload >/dev/null && echo "caddy reloaded: /$name/ is routed"
-  fi
-  cat <<EOF
-
-next:
-  1. edit apps/$name/run.sh to start your server on \$PORT
-  2. systemctl --user enable --now lantern-app@$name
+      ;;
+    tunnel)
+      cat > "$dir/run.sh" <<EOF
+#!/usr/bin/env bash
+# Started by lantern-app@$name.service: an ssh tunnel from 127.0.0.1:\$PORT through
+# \$TUNNEL_VIA to \$TUNNEL_TO (all three in app.env).
+#
+$prefix_note
+#
+# The unit has no terminal and no ssh-agent, so key login must work without a prompt:
+#   ssh -o BatchMode=yes $via true
+# ~/.ssh/config applies. When the link dies, ServerAlive* makes ssh exit and systemd
+# starts it again.
+set -euo pipefail
+exec ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new \\
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \\
+  -L "127.0.0.1:\$PORT:\$TUNNEL_TO" "\$TUNNEL_VIA"
 EOF
-  unit_active lantern || echo "  3. lantern reload   (lantern isn't running yet)"
+      ;;
+  esac
+  [[ ! -f "$dir/run.sh" ]] || chmod +x "$dir/run.sh"
+
+  local how=""
+  case "$mount" in keep) how=", prefix kept" ;; own) how=", own port $lan" ;; esac
+  case "$kind" in
+    process) echo "created apps/$name/ (port $port$how)" ;;
+    tunnel) echo "created apps/$name/ (ssh tunnel on port $port to $target via $via$how)" ;;
+    proxy) echo "created apps/$name/ (proxy to $upstream$how)" ;;
+  esac
+  if unit_active lantern; then
+    cmd_reload >/dev/null &&
+      if [[ -n "$lan" ]]; then echo "caddy reloaded: port $lan and /$name/ are routed"; else echo "caddy reloaded: /$name/ is routed"; fi
+  fi
+  local enable="systemctl --user enable --now lantern-app@$name"
+  case "$kind" in
+    process) printf '\nnext:\n  1. edit apps/%s/run.sh to start your server on $PORT\n  2. %s\n' "$name" "$enable" ;;
+    tunnel) printf '\nnext:\n  1. ssh -o BatchMode=yes %s true   must work without a prompt (else ssh-copy-id)\n  2. %s\n' "$via" "$enable" ;;
+    proxy) unit_active lantern || printf '\nnext:\n' ;;
+  esac
+  if ! unit_active lantern; then
+    if [[ "$kind" == proxy ]]; then echo "  1. lantern reload   (lantern isn't running yet)"; else echo "  3. lantern reload   (lantern isn't running yet)"; fi
+  fi
   echo
-  url_for "$name"; echo
+  public_url "$name"; echo
 }
 
 cmd_rm_app() {
@@ -350,8 +535,9 @@ cmd_rm_app() {
     esac
   done
   [[ ${#args[@]} -eq 1 ]] || die "$usage"
-  local name=${args[0]} dir="$APPS/${args[0]}" extra f known
+  local name=${args[0]} dir="$APPS/${args[0]}" extra f known kind
   [[ -n "$name" && "$name" != */* && -d "$dir" ]] || die "no app named '$name'"
+  kind="$(app_kind "$dir")"
   extra=""
   for f in "$dir"/* "$dir"/.[!.]*; do
     [[ -e "$f" || -L "$f" ]] || continue
@@ -365,21 +551,23 @@ cmd_rm_app() {
   systemctl --user disable --now "lantern-app@$name" >/dev/null 2>&1 || true
   systemctl --user reset-failed "lantern-app@$name" >/dev/null 2>&1 || true
   rm -rf -- "$dir"
-  echo "removed apps/$name (unit stopped and disabled)"
+  if [[ "$kind" == proxy ]]; then echo "removed apps/$name"; else echo "removed apps/$name (unit stopped and disabled)"; fi
   if unit_active lantern; then
-    cmd_reload >/dev/null && echo "caddy reloaded: /$name/ is no longer routed"
+    cmd_reload >/dev/null && echo "caddy reloaded: $name is no longer routed"
   fi
 }
 
-# Live check of one site or app (or one page of it) through the running lantern:
-# the page answers, Markdown is rendered, and the page's same-origin links resolve.
+# Live check of one site or app (or one page of it) through the running lantern, at its
+# LAN address as colleagues reach it (apps may check the Host header): the page answers,
+# Markdown is rendered, and the page's same-origin links resolve.
 cmd_check() {
   [[ $# -eq 1 ]] || die "usage: lantern check <name>[/<page>]"
-  local name=${1%%/*} sub="" base="http://127.0.0.1:$LANTERN_PORT" fails=0 warns=0 port state
+  local name=${1%%/*} sub="" addr fails=0 warns=0 port state main
+  addr="$(host_addr)" main="http://$addr:$LANTERN_PORT"
   [[ "$1" == */* ]] && sub="${1#*/}"
-  # The page's URL path, and the directory its relative links resolve against.
-  local page="/$name/$sub" pagedir
-  pagedir="${page%/*}/"
+  # base: the origin the page is served from; prefix: the path it lives under there
+  # (empty for an app on its own port, which owns "/").
+  local base=$main prefix="/$name" app=0 lan=""
   local g="" y="" r="" z=""
   [[ -t 1 ]] && g=$'\e[32m' y=$'\e[33m' r=$'\e[31m' z=$'\e[0m'
   ok() { printf '  %s✓%s %s\n' "$g" "$z" "$*"; }
@@ -388,13 +576,43 @@ cmd_check() {
 
   port_listening "$LANTERN_PORT" || die "nothing listening on port $LANTERN_PORT: is lantern running?"
   if [[ -d "$APPS/$name" ]]; then
+    local d="$APPS/$name" kind
+    app=1 kind="$(app_kind "$d")" lan="$(lan_port "$d")"
     echo "App $name"
-    port="$(app_port "$APPS/$name")"
-    state="$(systemctl --user is-active "lantern-app@$name" 2>/dev/null || true)"
-    if [[ -n "$port" ]] && port_listening "$port"; then
-      ok "listening on $port (unit: ${state:-unknown})"
+    if [[ "$kind" == proxy ]]; then
+      ok "proxies to $(app_upstream "$d") (lantern doesn't run it)"
     else
-      fail "nothing listening on ${port:-?} (unit: ${state:-unknown}; journalctl --user -u lantern-app@$name)"
+      port="$(app_port "$d")"
+      state="$(systemctl --user is-active "lantern-app@$name" 2>/dev/null || true)"
+      if [[ -n "$port" ]] && port_listening "$port"; then
+        ok "listening on $port (unit: ${state:-unknown})$([[ "$kind" != tunnel ]] || echo ", ssh tunnel to $(app_var "$d" TUNNEL_TO)")"
+      else
+        fail "nothing listening on ${port:-?} (unit: ${state:-unknown}; journalctl --user -u lantern-app@$name)"
+        [[ "$kind" != tunnel ]] ||
+          echo "    the tunnel needs key login without a prompt: ssh -o BatchMode=yes $(app_var "$d" TUNNEL_VIA) true"
+      fi
+    fi
+    if [[ -n "$lan" ]]; then
+      local loc
+      if port_listening "$lan"; then ok "own port $lan listening"; else fail "nothing listening on own port $lan (lantern reload)"; fi
+      loc="$(curl -s --noproxy '*' -o /dev/null --max-time 5 -w '%{redirect_url}' "$main/$name/" || true)"
+      if [[ "$loc" == "http://$addr:$lan/" ]]; then
+        ok "/$name/ redirects to port $lan"
+      else
+        fail "/$name/ should redirect to port $lan, got ${loc:-no redirect}"
+      fi
+      base="http://$addr:$lan" prefix=""
+    fi
+    # The landing page's badge: answers below 500, and never asks the browser for a login.
+    local shead scode
+    shead="$(curl -s --noproxy '*' -o /dev/null -I -D - --max-time 15 "$main/_status/$name" || true)"
+    scode="$(awk 'NR == 1 { print $2 }' <<<"$shead")"
+    if [[ ! "$scode" =~ ^[1-4] ]]; then
+      fail "badge: HEAD /_status/$name → ${scode:-no response}"
+    elif grep -qi '^www-authenticate:' <<<"$shead"; then
+      fail "badge: HEAD /_status/$name → $scode with WWW-Authenticate (the landing page would ask for a login)"
+    else
+      ok "badge: HEAD /_status/$name → $scode"
     fi
   elif [[ -L "$SITES/$name" || -e "$SITES/$name" ]]; then
     echo "Site $name"
@@ -403,19 +621,39 @@ cmd_check() {
     die "no site or app named '$name'"
   fi
 
-  local out code ctype body
-  out="$(curl -s --max-time 15 -w '\n%{http_code} %{content_type}' "$base$page" || true)"
-  read -r code ctype <<<"$(tail -n 1 <<<"$out")"
+  # The page's URL path. Apps may redirect (to a login page, say): follow, then check there.
+  local page="$prefix/$sub" out code ctype eff body shown follow=()
+  ((app)) && follow=(-L --max-redirs 5)
+  out="$(curl -s --noproxy '*' "${follow[@]}" --max-time 15 -w '\n%{http_code}|%{content_type}|%{url_effective}' "$base$page" || true)"
+  IFS='|' read -r code ctype eff <<<"$(tail -n 1 <<<"$out")"
   body="$(sed '$d' <<<"$out")"
+  shown=$page
+  if [[ -n "$eff" && "$eff" != "$base$page" ]]; then
+    local rest="${eff#*://}"
+    if [[ "http://${rest%%/*}" != "$base" ]]; then
+      shown="$page → $eff" body=""
+      warn "redirects away from lantern, to $eff"
+    else
+      page="/${rest#*/}"
+      [[ "$rest" == */* ]] || page=/
+      shown="$shown → $page"
+      [[ -z "$prefix" || "$page" == "$prefix/"* ]] ||
+        warn "redirect to $page leaves $prefix/ (an app that needs the root: --own-port)"
+    fi
+  fi
   if [[ "$code" == 200 ]]; then
-    ok "GET $page → 200 ${ctype%%;*}"
+    ok "GET $shown → 200 ${ctype%%;*}"
+  elif [[ "$code" == 401 ]] && ((app)); then
+    ok "GET $shown → 401: the app asks for a login (links not checked)"
   else
-    fail "GET $page → ${code:-no response}$([[ "$code" == 502 ]] && echo " (app not reachable)")"
+    fail "GET $shown → ${code:-no response}$([[ "$code" == 502 ]] && echo " (app not reachable)")"
   fi
 
   # Markdown pages (a .md, or a folder whose README is its index) come back rendered.
   local site_dir="$SITES/$name/$sub" md=0
-  if [[ "$page" =~ \.(md|markdown)$ ]]; then
+  if ((app)); then
+    :
+  elif [[ "$page" =~ \.(md|markdown)$ ]]; then
     md=1
   elif [[ "$page" == */ && -d "$site_dir" && ! -f "$site_dir/index.html" ]] &&
     [[ -f "$site_dir/README.md" || -f "$site_dir/readme.md" || -f "$site_dir/index.md" ]]; then
@@ -427,7 +665,8 @@ cmd_check() {
 
   # Same-origin links on the page (relative ones resolve against the page's folder).
   [[ "$code" == 200 ]] || body=""
-  local link url lcode n=0 bad=0
+  local pagedir="${page%%\?*}" link url lcode n=0 bad=0
+  pagedir="${pagedir%/*}/"
   while read -r link; do
     [[ -n "$link" ]] || continue
     link="${link//&amp;/&}"
@@ -437,13 +676,13 @@ cmd_check() {
       *://* | //* | mailto:* | data:* | javascript:* | tel:*) continue ;;
       /*)
         url="$base$link"
-        [[ "$link" == "/" || "$link" == /_shared/* || "$link" == "/$name/"* ]] ||
-          warn "absolute link $link leaves /$name/ (breaks unless the app is served at the root)"
+        [[ -z "$prefix" || "$link" == "/" || "$link" == /_shared/* || "$link" == "$prefix/"* ]] ||
+          warn "absolute link $link leaves $prefix/ (breaks unless the app is served at the root$( ((app)) && echo ": --own-port"))"
         ;;
       *) url="$base$pagedir$link" ;;
     esac
     n=$((n + 1))
-    lcode="$(curl -s -o /dev/null --max-time 15 -w '%{http_code}' "$url" || true)"
+    lcode="$(curl -s --noproxy '*' -o /dev/null --max-time 15 -w '%{http_code}' "$url" || true)"
     if [[ "$lcode" =~ ^[23] ]]; then :; else fail "link $link → ${lcode:-no response}"; bad=$((bad + 1)); fi
   done < <(grep -oiE '(href|src)="[^"]*"' <<<"$body" | sed -E 's/^[^"]*"//; s/"$//' | awk '!seen[$0]++' | head -n 50)
   ((n == 0)) || ((bad)) || ok "$n link(s) on the page resolve"
@@ -453,11 +692,11 @@ cmd_check() {
     echo "$fails problem(s), $warns warning(s)"
     return 1
   fi
-  echo "ok ($warns warning(s)): $(url_for "$name")$sub"
+  echo "ok ($warns warning(s)): $(public_url "$name")$sub"
 }
 
 cmd_list() {
-  local e name target port state
+  local e name target port state lan kind extra
   echo "Sites:"
   local any=0
   for e in "$SITES"/*; do
@@ -480,9 +719,14 @@ cmd_list() {
   while read -r e; do
     any=1
     name="$(basename "$e")"
-    port="$(app_port "$e")"
+    port="$(app_port "$e")" lan="$(lan_port "$e")" kind="$(app_kind "$e")" extra=""
     state="$(systemctl --user is-active "lantern-app@$name" 2>/dev/null || true)"
-    printf '  %-20s port %-6s %s\n' "$name" "${port:-?}" "${state:-unknown}"
+    case "$kind" in
+      tunnel) extra="ssh tunnel to $(app_var "$e" TUNNEL_TO) via $(app_var "$e" TUNNEL_VIA)" ;;
+      proxy) port="-" state="-" extra="proxy to $(app_upstream "$e")" ;;
+    esac
+    [[ -z "$lan" ]] || extra+="${extra:+, }own port $lan"
+    printf '  %-20s port %-6s %s%s\n' "$name" "${port:-?}" "${state:-unknown}" "${extra:+   $extra}"
   done < <(app_dirs)
   ((any)) || echo "  (none)"
 
@@ -596,7 +840,7 @@ cmd_doctor() {
     fail "nothing listening on port $LANTERN_PORT"
   fi
   if grep -qs '^ENABLED=yes' /etc/ufw/ufw.conf; then
-    warn "ufw is enabled: make sure the LAN may reach port $LANTERN_PORT, e.g. sudo ufw allow from <lan-subnet> to any port $LANTERN_PORT proto tcp"
+    warn "ufw is enabled: make sure the LAN may reach port $LANTERN_PORT (and $LAN_PORT_MIN-$LAN_PORT_MAX for apps on their own port), e.g. sudo ufw allow from <lan-subnet> to any port $LANTERN_PORT proto tcp"
   fi
   local link target
   for link in "$BIN_LINK:$LANTERN_ROOT/bin/lantern" "$SKILL_LINK:$LANTERN_ROOT/skill"; do
@@ -630,28 +874,55 @@ cmd_doctor() {
   ok "$n site(s) checked"
 
   echo "Apps"
-  local d port rport state seen=" " na=0
+  local d port lan pl up rup kind state seen=" " seenlan=" " na=0
   while read -r d; do
     name="$(basename "$d")"
     na=$((na + 1))
-    port="$(app_port "$d")"
-    rport="$(route_port "$d")"
-    [[ -x "$d/run.sh" ]] || fail "$name: run.sh missing or not executable"
+    kind="$(app_kind "$d")" port="$(app_port "$d")" lan="$(lan_port "$d")"
+    up="$(app_upstream "$d")" rup="$(route_upstream "$d")"
     [[ -f "$d/route.caddy" ]] || fail "$name: route.caddy missing (app is not routed)"
-    if [[ -z "$port" ]]; then
-      fail "$name: no PORT in app.env"
+    if [[ "$kind" == proxy ]]; then
+      valid_hostport "$up" || fail "$name: UPSTREAM is not <host>:<port>: $up"
     else
-      [[ "$seen" == *" $port "* ]] && fail "$name: port $port used by another app"
-      seen+="$port "
-      ((port >= APP_PORT_MIN && port <= APP_PORT_MAX)) || warn "$name: port $port outside $APP_PORT_MIN-$APP_PORT_MAX"
-      [[ -n "$rport" && "$rport" != "$port" ]] && fail "$name: route.caddy proxies to $rport but app.env says $port"
+      [[ -x "$d/run.sh" ]] || fail "$name: run.sh missing or not executable"
+      if [[ -z "$port" ]]; then
+        fail "$name: no PORT in app.env"
+      else
+        [[ "$seen" == *" $port "* ]] && fail "$name: port $port used by another app"
+        seen+="$port "
+        ((port >= APP_PORT_MIN && port <= APP_PORT_MAX)) || warn "$name: port $port outside $APP_PORT_MIN-$APP_PORT_MAX"
+      fi
+    fi
+    [[ -n "$rup" && -n "$up" && "$rup" != "$up" ]] && fail "$name: route.caddy proxies to $rup but app.env says $up"
+    if [[ "$kind" != proxy ]] && grep -qE '^[[:space:]]*import lantern-proxy' "$d/route.caddy" 2>/dev/null; then
+      warn "$name: route.caddy uses lantern-proxy for an app on 127.0.0.1, so it gets Host $up instead of the visitor's (import lantern-app $name $port)"
+    fi
+    if [[ -n "$lan" ]]; then
+      [[ "$seenlan$seen" == *" $lan "* || "$lan" == "$LANTERN_PORT" ]] && fail "$name: own port $lan is used twice"
+      seenlan+="$lan "
+      ((lan >= LAN_PORT_MIN && lan <= LAN_PORT_MAX)) || warn "$name: own port $lan outside $LAN_PORT_MIN-$LAN_PORT_MAX"
+      pl="$(caddy_lan_port "$d/port.caddy")"
+      if [[ ! -f "$d/port.caddy" ]]; then
+        fail "$name: LAN_PORT is set but port.caddy is missing"
+      elif [[ -n "$pl" && "$pl" != "$lan" ]]; then
+        fail "$name: port.caddy serves port $pl but app.env says $lan"
+      fi
+      pl="$(caddy_lan_port "$d/route.caddy")"
+      [[ -n "$pl" && "$pl" != "$lan" ]] && fail "$name: route.caddy redirects to port $pl but app.env says $lan"
+      unit_active lantern && ! port_listening "$lan" && warn "$name: nothing listening on own port $lan (lantern reload)"
+    elif [[ -f "$d/port.caddy" ]]; then
+      fail "$name: has port.caddy but no LAN_PORT in app.env"
+    fi
+    if [[ "$kind" == proxy ]]; then
+      ok "$name: proxies to $up (lantern doesn't run it)"
+      continue
     fi
     state="$(systemctl --user is-active "lantern-app@$name" 2>/dev/null || true)"
     if [[ "$state" == active ]]; then
       if [[ -n "$port" ]] && ! port_listening "$port"; then
-        warn "$name: running but nothing listening on $port"
+        warn "$name: running but nothing listening on $port$([[ "$kind" != tunnel ]] || echo " (ssh tunnel not up yet?)")"
       else
-        ok "$name: running on $port"
+        ok "$name: running on $port$([[ "$kind" != tunnel ]] || echo ", ssh tunnel to $(app_var "$d" TUNNEL_TO)")"
       fi
     else
       warn "$name: not running (systemctl --user enable --now lantern-app@$name)"
@@ -676,13 +947,21 @@ usage: lantern <command> [args]
                            lists what becomes readable; refuses a repo root unless --whole-repo
   new-site <name> [dir]    create <dir> (default: content repo pages/<name>) with a stub README, serve it
   rm-site <name>           remove a site (the symlink only)
-  add-app <name> [port] [--keep-prefix]
+  add-app <name> [port] [--keep-prefix | --own-port]
                            scaffold apps/<name>/ with the next free port; --keep-prefix for apps
-                           that serve under /<name>/ themselves (Streamlit, marimo, Dash, …)
+                           that serve under /<name>/ themselves (Streamlit, marimo, Dash, …);
+                           --own-port serves the app at the root of its own LAN port (8201-8299)
+                           instead, for apps with absolute URLs (device UIs, vendor dashboards)
+  add-tunnel <name> <ssh-host> <host:port> [--keep-prefix | --own-port]
+                           an app whose run.sh is an ssh tunnel to <host:port> as <ssh-host>
+                           sees it (user@host, ssh://user@host:port or a ~/.ssh/config alias)
+  add-proxy <name> <host:port> [--keep-prefix | --own-port]
+                           proxy a plain-HTTP service lantern doesn't start: one elsewhere, or
+                           one already running here (127.0.0.1:<port>); no unit
   rm-app <name> [--force]  stop and disable the app's unit, remove apps/<name>/
   check <name>[/<page>]    live check of a site or app, or one page of it: answers, Markdown
                            renders, same-origin links on it resolve
-  list                     sites (-> targets) and apps (port, status)
+  list                     sites (-> targets) and apps (port, status, tunnel/proxy, own port)
   content                  print the content repo path (creates it on first use)
   reload                   validate the Caddyfile, then reload Caddy
   doctor                   check caddy, service, port, links and apps
@@ -698,6 +977,8 @@ case "$cmd" in
   new-site) cmd_new_site "$@" ;;
   rm-site) cmd_rm_site "$@" ;;
   add-app) cmd_add_app "$@" ;;
+  add-tunnel) cmd_add_tunnel "$@" ;;
+  add-proxy) cmd_add_proxy "$@" ;;
   rm-app) cmd_rm_app "$@" ;;
   check) cmd_check "$@" ;;
   list | ls) cmd_list "$@" ;;

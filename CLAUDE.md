@@ -41,8 +41,8 @@ Adding a doc = create a symlink. Adding an app = drop a folder + one enable comm
 - **Directories** with a `README.md` (or `readme.md`, `index.md`) render it as the index, unless
   they have an `index.html`; otherwise Caddy `browse` listing via `_shared/browse.html`.
 - **Landing page** `/` is `_shared/index.html`, a template that lists `sites/` and `apps/` live;
-  app cards read `app.env` (own-port link, green dot = tunnel, blue dot = proxy). Every card
-  opens in a new tab.
+  app cards read `app.env` (own-port link, green dot = tunnel, blue dot = proxy). Doc cards
+  open in the same tab, app cards in a new tab.
 - **Caddy ≥ 2.8** required (`readFile`); developed against 2.11.7. Ubuntu's apt package (2.6) is too old.
 
 ## Layout

@@ -30,7 +30,8 @@
   {{- /* An app on its own port is linked there directly. */ -}}
   {{- $href := printf "/%s/" $name -}}{{- $path := $href -}}
   {{- if $lan}}{{$href = printf "http://%s:%s/" .host $lan}}{{$path = printf ":%s/" $lan}}{{end}}
-  <li><a href="{{html $href}}" target="_blank" rel="noopener">
+  {{- /* Docs open in this tab, apps in a new one. */}}
+  <li><a href="{{html $href}}"{{if .app}} target="_blank" rel="noopener"{{end}}>
     <div class="title">{{html $title}}
       {{- if not $ok}} <span class="badge broken">broken link</span>{{end}}
       {{- if .app}} <span class="badge" data-app-status="/_status/{{html $name}}">…</span>{{end}}</div>

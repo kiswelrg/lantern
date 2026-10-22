@@ -82,7 +82,8 @@ lacks() { ! curl -s "$BASE$1" | grep -qF -- "$2"; }
 ctype() { curl -s -o /dev/null -w '%{content_type}' "$BASE$1" | grep -q "^$2"; }
 
 check "landing page lists the example site"   has / 'lantern example'
-check "landing page cards open a new tab"      has / 'href="/_example/" target="_blank" rel="noopener"'
+check "landing page doc cards stay in the tab" has / 'href="/_example/">'
+check "landing page app cards open a new tab"  has / 'href="/_example-app/" target="_blank" rel="noopener"'
 check "landing page lists the example app"     has / 'data-app-status="/_status/_example-app"'
 check "dir with README renders it"             has /_example/ '<h1 id="lantern-example">'
 check "rendered md links the stylesheet"       has /_example/ '<link rel="stylesheet" href="/_shared/style.css">'

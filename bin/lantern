@@ -967,6 +967,10 @@ usage: lantern <command> [args]
   doctor                   check caddy, service, port, links and apps
   install [--port N]       install/refresh the systemd user units, link ~/.local/bin/lantern and
                            the Claude skill, start lantern
+
+An app (not a proxy) runs as the systemd user unit lantern-app@<name>:
+  systemctl --user restart lantern-app@<name>     restart it, e.g. after editing its config
+  journalctl --user -u lantern-app@<name> -n 50   its recent log
 EOF
 }
 

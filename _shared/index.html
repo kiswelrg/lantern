@@ -46,6 +46,13 @@
 
 {{- $sites := list -}}
 {{- range listFiles "/sites"}}{{if not (hasPrefix "." .)}}{{$sites = append $sites .}}{{end}}{{end -}}
+{{- /* A site with no index page is a file listing (recordings, outputs, …): it goes
+       after the docs, in a quieter group. A broken link stays with the docs. */ -}}
+{{- $docs := list -}}{{- $files := list -}}
+{{- range sortAlpha $sites}}{{$d := printf "/sites/%s" .}}{{$index := not (fileExists $d)}}
+  {{- range list "README.md" "readme.md" "index.md" "index.html"}}{{if fileExists (printf "%s/%s" $d .)}}{{$index = true}}{{end}}{{end}}
+  {{- if $index}}{{$docs = append $docs .}}{{else}}{{$files = append $files .}}{{end}}
+{{- end -}}
 {{- $apps := list -}}
 {{- range listFiles "/apps"}}{{if and (not (hasPrefix "." .)) (fileExists (printf "/apps/%s/route.caddy" .))}}{{$apps = append $apps .}}{{end}}{{end -}}
 {{- /* Which dots the legend explains: only those some card shows. */ -}}
@@ -75,11 +82,21 @@
 
 <h2>Docs</h2>
 {{- if $sites}}
+{{- if $docs}}
 <ul class="cards">
-{{- range $sites}}
+{{- range $docs}}
   {{template "card" (dict "name" . "dir" (printf "/sites/%s" .))}}
 {{- end}}
 </ul>
+{{- end}}
+{{- if $files}}
+<p class="group">Files</p>
+<ul class="cards files">
+{{- range $files}}
+  {{template "card" (dict "name" . "dir" (printf "/sites/%s" .))}}
+{{- end}}
+</ul>
+{{- end}}
 {{- else}}
 <p class="empty">Nothing yet. Add one with <code>bin/lantern add-site &lt;name&gt; &lt;path&gt;</code>.</p>
 {{- end}}

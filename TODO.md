@@ -33,6 +33,7 @@ Work top to bottom. Each phase should end in a working, testable state.
 - [x] Syntax highlighting: done server-side by Caddy's `markdown` (Chroma classes styled in
       `style.css`), so highlight.js isn't vendored. Revisit only if `.html` showcases need it
 - [x] Copy button on every code block (works over plain http via an `execCommand` fallback)
+- [x] `http(s)://` URLs inside code become links (lantern.js; placeholders like `{port}` skipped)
 - [x] Vendor mermaid (11.17.2), load only when `scripts: [mermaid]` or the page has a mermaid block
 - [x] Small header on every page: link back to `/`, breadcrumbs
 - [x] One extra style variant (`paper.css`) to prove switching works

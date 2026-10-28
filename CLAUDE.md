@@ -42,7 +42,9 @@ Adding a doc = create a symlink. Adding an app = drop a folder + one enable comm
   they have an `index.html`; otherwise Caddy `browse` listing via `_shared/browse.html`.
 - **Landing page** `/` is `_shared/index.html`, a template that lists `sites/` and `apps/` live;
   app cards read `app.env` (own-port link, green dot = tunnel, blue dot = proxy). Doc cards
-  open in the same tab, app cards in a new tab.
+  open in the same tab, app cards in a new tab. A site with no `README.md`/`readme.md`/
+  `index.md`/`index.html` at its top is a file share: listed after the docs under *Files*
+  (dashed, muted cards). No metadata file; a README would replace its listing.
 - **Caddy ≥ 2.8** required (`readFile`); developed against 2.11.7. Ubuntu's apt package (2.6) is too old.
 
 ## Layout
@@ -63,7 +65,8 @@ lantern/
 │   ├── index.html         # landing page template (lists sites/ and apps/)
 │   ├── browse.html        # directory listing template
 │   ├── error.html         # error page template (handle_errors)
-│   ├── lantern.js         # copy buttons, heading anchors, mermaid init, app up/down badges
+│   ├── lantern.js         # copy buttons, URLs in code -> links, heading anchors, mermaid init,
+│   │                      #   app up/down badges
 │   ├── style.css          # default style (+ variants like paper.css that @import it)
 │   └── vendor/            # mermaid, etc. — vendored, NO CDN (versions in vendor/README.md)
 ├── sites/                 # symlinks only (gitignored except .gitkeep and _example/)

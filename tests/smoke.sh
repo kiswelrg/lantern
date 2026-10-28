@@ -19,7 +19,7 @@ PIDS=()
 cleanup() {
   local p
   for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done
-  rm -f "$ROOT/sites/_smoke"
+  rm -f "$ROOT/sites/_smoke" "$ROOT/sites/_smoke-files"
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -63,6 +63,10 @@ echo "x" >"$TMP/repo/__pycache__/m.pyc"
 printf -- '---\n\nDoc that starts with a rule.\n' >"$TMP/repo/docs/rule.md"
 printf '# Smoke repo\n' >"$TMP/repo/README.md"
 ln -sfn "$TMP/repo" "$ROOT/sites/_smoke"
+# A folder of files with no index page.
+mkdir -p "$TMP/dump"
+echo "x" >"$TMP/dump/take-1.wav"
+ln -sfn "$TMP/dump" "$ROOT/sites/_smoke-files"
 
 pass=0 failed=0
 check() { # description, then a command that must succeed
@@ -80,11 +84,14 @@ status() { [[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE$1")" == "$2" ]]; 
 has() { curl -s "$BASE$1" | grep -qF -- "$2"; }
 lacks() { ! curl -s "$BASE$1" | grep -qF -- "$2"; }
 ctype() { curl -s -o /dev/null -w '%{content_type}' "$BASE$1" | grep -q "^$2"; }
+in_files() { curl -s "$BASE/" | sed -n '/<ul class="cards files">/,/<\/ul>/p' | grep -qF -- "$1"; }
 
 check "landing page lists the example site"   has / 'lantern example'
 check "landing page doc cards stay in the tab" has / 'href="/_example/">'
 check "landing page app cards open a new tab"  has / 'href="/_example-app/" target="_blank" rel="noopener"'
 check "landing page lists the example app"     has / 'data-app-status="/_status/_example-app"'
+check "landing page: file dump under Files"    in_files 'href="/_smoke-files/"'
+check "landing page: doc site before Files"    bash -c "curl -s '$BASE/' | sed '/class=\"cards files\"/q' | grep -q 'href=\"/_smoke/\"'"
 check "dir with README renders it"             has /_example/ '<h1 id="lantern-example">'
 check "rendered md links the stylesheet"       has /_example/ '<link rel="stylesheet" href="/_shared/style.css">'
 check ".md is rendered as HTML"                ctype /_example/features.md text/html

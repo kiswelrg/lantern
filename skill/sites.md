@@ -3,8 +3,10 @@
 A site is a folder served at `/<name>/` through the symlink `sites/<name>`. In it:
 
 - `.md` renders with the shared style (server-side highlighting, copy buttons, mermaid).
+  `http(s)://` URLs inside code blocks become links, so no need to repeat them as Markdown links.
 - A folder's `README.md` (or `readme.md`, `index.md`) is its index page, unless the folder has
-  an `index.html`; a folder with neither shows a file listing.
+  an `index.html`; a folder with neither shows a file listing. A site with neither at its top
+  is a file share: the landing page lists it under *Files*, after the docs, as a quieter card.
 - `.html` and every other file is served as-is.
 
 `$LANTERN_ROOT/sites/_example/` is a working example of each feature.
@@ -36,8 +38,10 @@ and the fix you offer:
 - **Broken links**: relative links and images whose target file is missing.
 - **Unrendered formats**: `.rst`, `.adoc`, `.docx` and `.ipynb` download as raw files. Flag
   notebooks only; static notebook publishing is planned (lantern `TODO.md`, Phase 6).
-- **Index**: no `README.md`/`index.md`/`index.html` at the top means a bare file listing.
-  Offer a README with `title`, `description` and links to the main docs.
+- **Index**: no `README.md`/`index.md`/`index.html` at the top means a bare file listing,
+  under *Files* on the landing page. Fine for a file share (data, recordings, outputs that back
+  another site): a README there would replace the listing. For docs, offer a README with
+  `title`, `description` and links to the main docs.
 - **Landing card**: a README without `title`/`description` frontmatter; offer both.
 - **Weight**: files over ~50 MB, data dumps, build output riding along.
 - **Generated docs**: with `mkdocs.yml`, Docusaurus or Sphinx, the `.md` sources render but

@@ -22,6 +22,18 @@ def titles(root: Path) -> list[str]:
 bin/lantern add-site deploy-notes ~/Projects/some-repo/docs
 ```
 
+URLs in code are links (Ctrl+click opens a new tab); placeholders like
+`http://<host>:<port>/` stay plain text:
+
+```
+# lantern on this machine
+http://localhost:8080/_example/  (the README of this example site)
+```
+
+```bash
+curl -s "http://localhost:8080/_example/features.md?raw=1" | head
+```
+
 Template syntax inside docs is shown verbatim, not executed:
 
 ```yaml

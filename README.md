@@ -25,8 +25,11 @@ links it. Without a `dir` it goes in the **content repo** (below).
 
 - Write docs in **Markdown**. They're rendered with the shared style automatically,
   with server-side syntax highlighting and a copy button on every code block.
+  `http(s)://` URLs inside code are clickable links too.
 - A folder's `README.md` (or `readme.md`, `index.md`) becomes its index page, unless the
-  folder has an `index.html`. Folders with neither get a file listing.
+  folder has an `index.html`. Folders with neither get a file listing, and a site whose top
+  folder has neither (recordings, outputs, …) is listed under *Files*, after the docs, on the
+  landing page.
 - Need custom layout or interactivity? Write a `.html` file in the same folder and add
   `<link rel="stylesheet" href="/_shared/style.css">`.
 - Relative links and images (`./img.png`, `other.md`) just work.

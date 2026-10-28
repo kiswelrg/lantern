@@ -214,6 +214,17 @@ pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 .copy-btn.done { color: var(--ok); opacity: 1; }
 @media (hover: none) { .copy-btn { opacity: 0.8; } }
 
+/* URLs inside code, linked by lantern.js */
+code a.code-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 0.2em;
+}
+code a.code-link:hover { text-decoration-color: currentColor; }
+/* Chroma colours the tokens a URL was split into; the link's colour wins. */
+.chroma a.code-link * { color: inherit; }
+
 pre.mermaid {
   background: none;
   border: 0;
@@ -272,6 +283,23 @@ pre.mermaid {
 .cards .title { font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
 .cards .path { font: 0.8rem var(--font-mono); color: var(--fg-muted); }
 .cards .desc { font-size: 0.9rem; color: var(--fg-muted); margin-top: 0.35rem; }
+
+/* Sites without an index page (landing page): file listings, a step back from the docs. */
+.page .group { font-size: 0.8rem; color: var(--fg-muted); margin: 1.25rem 0 0.5rem; }
+.cards.files { grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: 0.5rem; }
+.cards.files a { padding: 0.5rem 0.85rem; border-style: dashed; color: var(--fg-muted); }
+.cards.files a:hover { color: var(--fg); border-style: solid; }
+.cards.files .title { font-weight: 500; }
+.cards.files .title::before {
+  content: "";
+  flex: none;
+  width: 0.9rem;
+  height: 0.9rem;
+  background: currentColor;
+  -webkit-mask: var(--folder) center / contain no-repeat;
+  mask: var(--folder) center / contain no-repeat;
+  --folder: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 3.5A1.5 1.5 0 0 1 2.5 2h3.6l1.5 1.5h5.9A1.5 1.5 0 0 1 15 5v7.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5z'/%3E%3C/svg%3E");
+}
 
 .badge {
   font: 600 0.7rem var(--font-body);

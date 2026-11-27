@@ -746,7 +746,7 @@ cmd_reload() {
 }
 
 cmd_install() {
-  local port="" caddy ver f
+  local port="" caddy ver f uv_path
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --port) port="${2:-}"; shift 2 || die "usage: lantern install [--port N]" ;;
@@ -756,6 +756,8 @@ cmd_install() {
 
   caddy="$(caddy_bin)"
   [[ -n "$caddy" ]] || die "caddy is not installed (see README → Setup)"
+  uv_path="$(command -v uv || true)"
+  [[ -n "$uv_path" ]] || die "uv is required for README editing (see README → Setup)"
   ver="$(caddy_version "$caddy")"
   version_ge "$ver" "$MIN_CADDY" || die "caddy $ver is too old; need >= $MIN_CADDY"
   [[ "$LANTERN_ROOT" =~ [[:space:]] ]] && die "LANTERN_ROOT must not contain spaces: $LANTERN_ROOT"
@@ -770,8 +772,8 @@ cmd_install() {
   validate || die "Caddyfile is invalid; not installing"
 
   mkdir -p "$UNIT_DIR"
-  for f in lantern.service lantern-app@.service; do
-    sed -e "s|@LANTERN_ROOT@|$LANTERN_ROOT|g" -e "s|@CADDY@|$caddy|g" \
+  for f in lantern.service lantern-app@.service lantern-editor.service; do
+    sed -e "s|@LANTERN_ROOT@|$LANTERN_ROOT|g" -e "s|@CADDY@|$caddy|g" -e "s|@UV@|$uv_path|g" \
       "$LANTERN_ROOT/systemd/$f" > "$UNIT_DIR/$f"
     echo "installed $UNIT_DIR/$f"
   done
@@ -814,17 +816,29 @@ cmd_doctor() {
   fi
 
   echo "Service"
-  local f
-  for f in lantern.service lantern-app@.service; do
+  local f uv_path
+  uv_path="$(command -v uv || true)"
+  for f in lantern.service lantern-app@.service lantern-editor.service; do
     if [[ ! -f "$UNIT_DIR/$f" ]]; then
       fail "$f not installed; run bin/lantern install"
-    elif cmp -s <(sed -e "s|@LANTERN_ROOT@|$LANTERN_ROOT|g" -e "s|@CADDY@|$caddy|g" "$LANTERN_ROOT/systemd/$f") "$UNIT_DIR/$f"; then
+    elif cmp -s <(sed -e "s|@LANTERN_ROOT@|$LANTERN_ROOT|g" -e "s|@CADDY@|$caddy|g" -e "s|@UV@|$uv_path|g" "$LANTERN_ROOT/systemd/$f") "$UNIT_DIR/$f"; then
       ok "$f installed"
     else
       warn "$f differs from systemd/$f; run bin/lantern install"
     fi
   done
   if unit_active lantern; then ok "lantern.service running"; else fail "lantern.service not running (journalctl --user -u lantern)"; fi
+  if [[ -n "$uv_path" ]]; then ok "uv installed ($uv_path)"; else fail "uv is required for README editing"; fi
+  if unit_active lantern-editor; then
+    ok "lantern-editor.service running"
+  else
+    fail "lantern-editor.service not running (journalctl --user -u lantern-editor)"
+  fi
+  if curl -fsS --max-time 3 "http://127.0.0.1:$LANTERN_PORT/_editor/health" >/dev/null 2>&1; then
+    ok "README editor reachable through Caddy"
+  else
+    fail "README editor unavailable (run bin/lantern install to refresh the units)"
+  fi
   if systemctl --user is-enabled --quiet lantern 2>/dev/null; then ok "lantern.service enabled"; else warn "lantern.service not enabled (won't start at boot)"; fi
   if [[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" == "yes" ]]; then
     ok "linger enabled"

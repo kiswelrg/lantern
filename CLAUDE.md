@@ -12,7 +12,14 @@ never require editing the Caddyfile, writing a new systemd unit, or touching a b
 Adding a doc = create a symlink. Adding an app = drop a folder + one enable command.
 
 ## Architecture (decided)
-- **Caddy v2** is the only server. No Django, no Node backend, no frontend framework.
+- **Caddy v2** is the LAN-facing server. No Django, no Node backend, no frontend framework.
+  The README editor is a dependency-free Python service through uv, on a private Unix
+  socket (`.state/editor.sock`), proxied at `/_editor/`. Only site files named exactly
+  `README.md` can be edited. `.state/readme-history.sqlite3` stores each save's request IP,
+  UTC timestamp and full before/after source. Caddy overwrites the trusted IP header with
+  its TCP peer; clients cannot spoof the recorded address. Apps have no editor.
+  History uses `/_editor/diff` to show grouped line changes with three context lines;
+  `/_editor/revision` and the stored full snapshots remain intact.
 - **Static docs** live in each repo; `sites/<name>` is a symlink to that repo's docs folder.
   URL: `http://<host>:<port>/<name>/`. Pages and tools that belong to no repo live in the
   **content repo** (`lantern-content`, sibling of lantern; `LANTERN_CONTENT` in `lantern.env`
@@ -59,7 +66,10 @@ lantern/
 ├── lantern.env            # optional, gitignored: LANTERN_PORT, LANTERN_CONTENT, proxy vars (read by all units)
 ├── systemd/
 │   ├── lantern.service          # runs caddy
-│   └── lantern-app@.service     # template unit for all apps
+│   ├── lantern-app@.service     # template unit for all apps
+│   └── lantern-editor.service   # README saves and SQLite history
+├── server/editor.py       # README save/history service (stdlib only, via uv)
+├── .state/                # private, gitignored editor socket and SQLite history
 ├── _shared/
 │   ├── md.html            # markdown page template
 │   ├── index.html         # landing page template (lists sites/ and apps/)
@@ -67,6 +77,8 @@ lantern/
 │   ├── error.html         # error page template (handle_errors)
 │   ├── lantern.js         # copy buttons, URLs in code -> links, heading anchors, mermaid init,
 │   │                      #   app up/down badges
+│   ├── editor.js          # README-only editor and history dialogs
+│   ├── editor.css         # README toolbar and viewport-sized source editor
 │   ├── style.css          # default style (+ variants like paper.css that @import it)
 │   └── vendor/            # mermaid, etc. — vendored, NO CDN (versions in vendor/README.md)
 ├── sites/                 # symlinks only (gitignored except .gitkeep and _example/)

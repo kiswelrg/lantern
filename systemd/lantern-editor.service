@@ -1,0 +1,19 @@
+# README editing/history only. Caddy remains the LAN-facing server.
+[Unit]
+Description=lantern: README editor and SQLite history
+PartOf=lantern.service
+Before=lantern.service
+
+[Service]
+Type=exec
+WorkingDirectory=@LANTERN_ROOT@
+Environment="LANTERN_ROOT=@LANTERN_ROOT@"
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=-@LANTERN_ROOT@/lantern.env
+ExecStart="@UV@" run --no-project python "@LANTERN_ROOT@/server/editor.py"
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=lantern.service

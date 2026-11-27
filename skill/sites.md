@@ -8,6 +8,14 @@ A site is a folder served at `/<name>/` through the symlink `sites/<name>`. In i
   an `index.html`; a folder with neither shows a file listing. A site with neither at its top
   is a file share: the landing page lists it under *Files*, after the docs, as a quieter card.
 - `.html` and every other file is served as-is.
+- Site files named exactly `README.md` have **Edit** and **History** actions in the breadcrumb bar,
+  including nested READMEs. Browser saves update the linked source file and record full
+  before/after text, UTC timestamp and the request IP in Lantern's private
+  `.state/readme-history.sqlite3`. All LAN visitors can edit; identity is `Editor <IP>`.
+  Apps and other filenames are not editable. `lantern-editor.service` (installed by
+  `lantern install`) supplies the editor through Caddy's private Unix socket.
+  History displays compact line diffs with three context lines; complete snapshots remain
+  in SQLite and are available through the existing revision endpoint.
 
 `$LANTERN_ROOT/sites/_example/` is a working example of each feature.
 

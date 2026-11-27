@@ -343,6 +343,6 @@ table.listing { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 .error-page .code { font-size: 4rem; font-weight: 700; color: var(--fg-muted); margin: 0; }
 
 @media print {
-  .lantern-bar, .copy-btn { display: none; }
+  .lantern-bar, .copy-btn, .readme-tools, .readme-dialog { display: none; }
   pre { white-space: pre-wrap; }
 }

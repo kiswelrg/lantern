@@ -171,6 +171,14 @@ http://:{$LANTERN_PORT:8080} {
 		# 2. Apps (one route.caddy per app; zero apps is fine).
 		import {$LANTERN_ROOT}/apps/*/route.caddy
 
+		# README editing/history, isolated from apps. The private socket only accepts
+		# this user's requests; overwrite the editor IP with the actual TCP peer.
+		handle /_editor/* {
+			reverse_proxy unix/{$LANTERN_ROOT}/.state/editor.sock {
+				header_up X-Lantern-Editor-IP {http.request.remote.host}
+			}
+		}
+
 		# 3. Shared styles, scripts and templates.
 		handle_path /_shared/* {
 			root * {$LANTERN_ROOT}/_shared

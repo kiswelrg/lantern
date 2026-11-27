@@ -46,16 +46,63 @@
 <script defer src="/_shared/vendor/{{regexReplaceAll `[^a-z0-9_-]` (toString .) ""}}.min.js"></script>
 {{- end}}
 <script defer src="/_shared/lantern.js"></script>
+{{- if eq (last $parts) "README.md"}}
+<link rel="stylesheet" href="/_shared/editor.css?v=3">
+<script defer src="/_shared/editor.js?v=4"></script>
+{{- end}}
 </head>
 <body>
 <header class="lantern-bar">
+  <div class="lantern-bar-inner">
   <nav class="crumbs">
     <a class="home" href="/">lantern</a>
     {{- $acc := "" -}}
     {{- range initial $parts}}{{$acc = printf "%s/%s" $acc .}}<span class="sep">/</span><a href="{{html $acc}}/">{{html .}}</a>{{end -}}
     {{- if not $isIndex}}<span class="sep">/</span><span class="here">{{html $stem}}</span>{{end}}
   </nav>
+  {{- if eq (last $parts) "README.md"}}
+  <div class="readme-tools" data-readme-path="{{html $doc}}" aria-label="README tools">
+    <button type="button" id="readme-edit" aria-label="Edit README" title="Edit README">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5M4 16l12-12a3.54 3.54 0 0 1 5 5L9 21H3z"/></svg>
+      <span>Edit</span>
+    </button>
+    <button type="button" id="readme-history" title="Edit history">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.6 7.4M3 4v7h7M12 7v5l3 2"/></svg>
+      <span>History</span>
+    </button>
+  </div>
+  {{- end}}
+  </div>
 </header>
+{{- if eq (last $parts) "README.md"}}
+<dialog id="readme-editor" class="readme-dialog" aria-labelledby="readme-editor-title">
+  <div class="readme-editor-header">
+    <div>
+      <h2 id="readme-editor-title">Edit README.md</h2>
+      <p id="readme-editor-status" class="readme-status" role="status" aria-live="polite">Loading…</p>
+    </div>
+    <span class="readme-format">Markdown</span>
+  </div>
+  <label for="readme-source" class="readme-source-label">Markdown source</label>
+  <textarea id="readme-source" rows="32" spellcheck="false" aria-describedby="readme-editor-status" disabled></textarea>
+  <div class="readme-editor-footer">
+    <span class="readme-shortcut">Ctrl / ⌘ + Enter to save</span>
+    <div class="readme-actions">
+      <button type="button" id="readme-cancel">Cancel</button>
+      <button type="button" id="readme-save" class="primary" disabled>Save changes</button>
+    </div>
+  </div>
+</dialog>
+<dialog id="readme-history-dialog" class="readme-dialog" aria-labelledby="readme-history-title">
+  <h2 id="readme-history-title">README edit history</h2>
+  <p id="readme-history-status" class="readme-status" role="status" aria-live="polite"></p>
+  <ol id="readme-history-list"></ol>
+  <div class="readme-actions">
+    <button type="button" id="readme-history-more" hidden>Older edits</button>
+    <button type="button" id="readme-history-close">Close</button>
+  </div>
+</dialog>
+{{- end}}
 <main class="doc">
 {{- if and $meta.title (not $h1)}}
 <h1>{{html $title}}</h1>

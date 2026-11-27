@@ -133,6 +133,35 @@ page to the X site" or "run this app under lantern". It surveys, shows one propo
 commands, what becomes readable on the LAN, audit findings), runs it after your go, and
 finishes with `lantern check`. It never commits.
 
+## Edit a site's README
+
+Open a site's `README.md` (or its directory index) and click **Edit** in the breadcrumb
+bar. The editor fills the window, with a large source area and Save/Cancel always visible.
+Edit the Markdown source, including any frontmatter, then **Save changes** (Ctrl/Cmd+Enter also
+saves). The page reloads with Caddy's usual rendering. **History** lists saved edits as
+`Editor 192.168.0.69` with their date/time. Open an entry to see a line diff: green additions,
+red removals, old/new line numbers, and three lines of surrounding context. Unchanged
+sections are omitted. Opening another entry folds the previous one. The backend still
+retains both complete versions of every edit.
+
+Only files named exactly `README.md` within `sites/` are editable, including nested
+READMEs. Apps and other filenames have no editor. Saves update the original file in the
+linked repo. Anyone who can reach Lantern on the LAN can edit these READMEs; the editor
+identity is the request's IP address, with no account or login. Caddy records its actual
+peer address, overriding client-supplied IP headers.
+
+The editor keeps every saved change's path, timestamp, IP, and full before/after text in
+`.state/readme-history.sqlite3` in the Lantern repo. This private, gitignored SQLite file
+is outside the served folders; back it up to retain history. History starts with browser
+edits made after this feature is installed. Unchanged saves add no history entry. A stale
+save is rejected so another browser's edits are not silently overwritten. READMEs must
+be UTF-8 and at most 1 MiB to edit.
+
+`lantern-editor.service` runs the dependency-free Python service through `uv`, accepting
+requests only on `.state/editor.sock`. Lantern starts/stops it with Caddy. On an existing
+installation, run `bin/lantern install` once to install the extra user unit and refresh
+the Caddy unit. Logs: `journalctl --user -u lantern-editor -f`.
+
 ## Styles
 All shared CSS lives in `_shared/`. Edit `style.css` to change the default look everywhere
 (it has light and dark variants), or add a variant like `paper.css` (it `@import`s
@@ -147,10 +176,16 @@ lantern rm-app X       # stop + disable an app, remove apps/X/ (--force if it ho
 lantern doctor         # caddy, service, port, broken links, port clashes
 lantern reload         # validate + reload Caddy (add-app/-tunnel/-proxy do it when lantern runs)
 tests/smoke.sh         # curl + CLI smoke tests on a throwaway copy (or: tests/smoke.sh http://host:8080)
+uv run --no-project python tests/test_editor.py  # isolated README editor behavior checks
 ```
 
+For the optional browser check, use an existing Playwright installation:
+`LANTERN_PLAYWRIGHT=/path/to/playwright node tests/editor_browser.cjs` (Chrome defaults
+to `/usr/bin/google-chrome`; override it with `LANTERN_CHROME`). It starts throwaway
+Caddy/editor services and checks saves, history, conflicts, cancellation and mobile layout.
+
 ## Setup (once)
-Needs **Caddy ≥ 2.8** (developed against 2.11.7). Ubuntu's own `caddy` package is too old
+Needs **uv** (for the README editor) and **Caddy ≥ 2.8** (developed against 2.11.7). Ubuntu's own `caddy` package is too old
 (2.6), so use Caddy's official apt repo (https://caddyserver.com/docs/install#debian-ubuntu-raspbian):
 
 ```bash

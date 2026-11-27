@@ -1,0 +1,193 @@
+/* README tools and dialogs, loaded after the page's chosen document style. */
+.lantern-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0.5rem 1.25rem;
+}
+.lantern-bar-inner .crumbs {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.readme-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.readme-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius);
+  font: 500 0.8rem/1.25 var(--font-body);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.readme-tools button:hover { color: var(--accent); background: var(--accent-soft); }
+.readme-tools button:focus-visible, .readme-dialog button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.readme-tools svg {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.readme-dialog {
+  width: calc(100% - 2rem);
+  max-width: 58rem;
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  padding: 1.25rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 18%);
+  overflow: auto;
+}
+.readme-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.readme-dialog h2 { margin: 0 0 0.5rem; font-size: 1.25rem; }
+.readme-status { color: var(--fg-muted); font-size: 0.85rem; }
+.readme-status.error, .readme-dialog .error { color: var(--bad); }
+.readme-dialog button {
+  font: 500 0.9rem/1.5 var(--font-body);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+}
+.readme-dialog button:hover { border-color: var(--accent); }
+.readme-dialog button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.readme-dialog button:disabled { cursor: default; opacity: 0.5; }
+.readme-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1rem; }
+
+/* Give the source the remaining viewport, independent of the README's length. */
+#readme-editor {
+  width: calc(100% - 3rem);
+  max-width: 100rem;
+  height: calc(100vh - 3rem);
+  height: calc(100dvh - 3rem);
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+}
+#readme-editor[open] { display: flex; flex-direction: column; }
+.readme-editor-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.readme-editor-header h2 { font-size: 1.1rem; margin: 0; }
+.readme-editor-header .readme-status { margin: 0.3rem 0 0; }
+.readme-format {
+  color: var(--fg-muted);
+  font: 0.75rem var(--font-mono);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+}
+.readme-source-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+#readme-source {
+  display: block;
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 1.25rem 1.5rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  font: 1rem/1.65 var(--font-mono);
+  tab-size: 2;
+}
+#readme-source:focus { outline: none; box-shadow: inset 3px 0 var(--accent); }
+.readme-editor-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1.5rem;
+  background: var(--bg-soft);
+  border-top: 1px solid var(--border);
+}
+.readme-shortcut { color: var(--fg-muted); font-size: 0.8rem; }
+.readme-editor-footer .readme-actions { margin: 0; }
+
+#readme-history-list { list-style: none; margin: 0; padding: 0; }
+#readme-history-list li + li { margin-top: 0.6rem; }
+#readme-history-list details { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.65rem 0.8rem; }
+#readme-history-list summary { cursor: pointer; font-size: 0.9rem; overflow-wrap: anywhere; }
+.readme-revision-id { display: inline-block; margin-left: 0.7rem; color: var(--fg-muted); font-size: 0.8rem; }
+.readme-diff-counts { display: flex; gap: 1rem; margin: 0.8rem 0 0.6rem; font: 500 0.8rem var(--font-mono); }
+.readme-diff-count-add { color: var(--ok); }
+.readme-diff-count-delete { color: var(--bad); }
+.readme-diff { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font: 0.8rem/1.65 var(--font-mono); }
+.readme-diff-hunk { padding: 0.35rem 0.65rem; background: var(--accent-soft); color: var(--fg-muted); }
+.readme-diff-hunk:not(:first-child) { border-top: 1px solid var(--border); }
+.readme-diff-line { display: grid; grid-template-columns: 4ch 4ch 2ch minmax(0, 1fr); }
+.readme-diff-add { background: var(--hl-ins-bg); }
+.readme-diff-delete { background: var(--hl-del-bg); }
+.readme-diff-number { padding: 0 0.3rem; text-align: right; color: var(--fg-muted); user-select: none; font-variant-numeric: tabular-nums; }
+.readme-diff-marker { text-align: center; user-select: none; }
+.readme-diff-add .readme-diff-marker { color: var(--ok); }
+.readme-diff-delete .readme-diff-marker { color: var(--bad); }
+.readme-diff-text { padding-right: 0.65rem; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+
+@media (max-width: 40rem) {
+  .lantern-bar-inner { padding: 0.5rem 0.75rem; gap: 0.5rem; }
+  .readme-tools button { padding: 0.45rem 0.4rem; gap: 0.3rem; }
+  #readme-editor {
+    width: calc(100% - 1rem);
+    height: calc(100vh - 1rem);
+    height: calc(100dvh - 1rem);
+  }
+  .readme-editor-header, .readme-editor-footer { padding: 0.8rem 1rem; }
+  #readme-source { padding: 1rem; }
+  .readme-format, .readme-shortcut { display: none; }
+  .readme-editor-footer { justify-content: flex-end; }
+  #readme-history-list details { padding: 0.6rem; }
+  .readme-diff { font-size: 0.75rem; }
+  .readme-diff-line { grid-template-columns: 3.5ch 3.5ch 1.5ch minmax(0, 1fr); }
+}
+
+@media print {
+  .readme-tools, .readme-dialog { display: none !important; }
+}

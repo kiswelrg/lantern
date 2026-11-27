@@ -4,6 +4,8 @@
 [Unit]
 Description=lantern: LAN docs and apps (Caddy)
 Documentation=file://@LANTERN_ROOT@/README.md
+Wants=lantern-editor.service
+After=lantern-editor.service
 
 [Service]
 Type=notify

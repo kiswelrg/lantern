@@ -12,5 +12,8 @@
 # Local settings written by `bin/lantern install` (LANTERN_PORT, LANTERN_CONTENT).
 /lantern.env
 
+# Private README edit history and editor socket (never served).
+/.state/
+
 *.log
 __pycache__/

@@ -35,14 +35,18 @@ if [[ -z "$BASE" ]]; then
   command -v caddy >/dev/null || { echo "caddy not on PATH" >&2; exit 1; }
   ROOT="$TMP/root"
   mkdir -p "$ROOT/sites" "$ROOT/apps"
-  cp -a "$SRC/Caddyfile" "$SRC/_shared" "$SRC/bin" "$SRC/systemd" "$ROOT/"
+  cp -a "$SRC/Caddyfile" "$SRC/_shared" "$SRC/bin" "$SRC/systemd" "$SRC/server" "$SRC/tests" "$ROOT/"
   cp -a "$SRC/sites/_example" "$ROOT/sites/"
   cp -a "$SRC/apps/_example-app" "$ROOT/apps/"
   export LANTERN_ROOT="$ROOT" LANTERN_PORT=18080 LANTERN_ADMIN_PORT=12019 LANTERN_CONTENT="$TMP/content"
+  export XDG_CONFIG_HOME="$TMP/config" XDG_DATA_HOME="$TMP/data"
   caddy run --config "$ROOT/Caddyfile" --adapter caddyfile >"$TMP/caddy.log" 2>&1 &
   PIDS+=($!)
   BASE="http://127.0.0.1:$LANTERN_PORT"
   wait_for "$BASE/" || { cat "$TMP/caddy.log" >&2; exit 1; }
+  uv run --no-project python "$ROOT/server/editor.py" >"$TMP/editor.log" 2>&1 &
+  PIDS+=($!)
+  wait_for "$BASE/_editor/health" || { cat "$TMP/editor.log" >&2; exit 1; }
   THROWAWAY=1
 fi
 BASE="${BASE%/}"
@@ -94,6 +98,13 @@ check "landing page: file dump under Files"    in_files 'href="/_smoke-files/"'
 check "landing page: doc site before Files"    bash -c "curl -s '$BASE/' | sed '/class=\"cards files\"/q' | grep -q 'href=\"/_smoke/\"'"
 check "dir with README renders it"             has /_example/ '<h1 id="lantern-example">'
 check "rendered md links the stylesheet"       has /_example/ '<link rel="stylesheet" href="/_shared/style.css">'
+check "README has edit tools"                 has /_example/ 'id="readme-edit"'
+check "direct README has edit tools"          has /_example/README.md 'data-readme-path="/_example/README.md"'
+check "other Markdown has no edit tools"      lacks /_example/features.md 'id="readme-edit"'
+check "app has no README edit tools"          lacks /_example-app/ 'id="readme-edit"'
+check "shared editor script is served"        status /_shared/editor.js 200
+check "README loads editor layout"            has /_example/ 'href="/_shared/editor.css?v=3"'
+check "shared editor stylesheet is served"    ctype /_shared/editor.css text/css
 check ".md is rendered as HTML"                ctype /_example/features.md text/html
 check "code is highlighted"                    has /_example/features.md 'class="chroma"'
 check "{{ }} in docs is not executed"          has /_example/features.md '{{ .Values.image.repository }}'
@@ -123,6 +134,8 @@ check "app without slash redirects"            status /_example-app 308
 check "app badge route answers HEAD"           bash -c "[[ \$(curl -s -o /dev/null -I -w '%{http_code}' '$BASE/_status/_example-app') == 200 ]]"
 
 if [[ -n "${THROWAWAY:-}" ]]; then
+  check "README saves, history, restrictions and unspoofable IP through Caddy" \
+    env LANTERN_TEST_URL="$BASE" uv run --no-project python "$ROOT/tests/test_editor.py" CaddyEditorTests
   # The CLI of the temp copy, with no systemd user bus: units look stopped and
   # nothing reloads the real lantern.
   lantern() { env -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="$TMP/nobus" "$ROOT/bin/lantern" "$@"; }
